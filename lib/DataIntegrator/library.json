@@ -1,0 +1,27 @@
+{
+  "name":"DataIntegrator",
+  "description":"Integrates phisical data media with communication without recompiling code. Just json file update needed.",
+  "keywords":"data,integration,media,communication",
+  "authors":
+  {
+    "name": "Johautt Hernández",
+    "maintainer": true
+  },
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/jahm86/DataIntegrator.git"
+  },
+  "dependencies":
+  [
+    {
+      "owner": "bblanchon",
+      "name": "ArduinoJson",
+      "version": ">=7.0.4"
+    }
+  ],
+  "version": "0.1.0",
+  "license": "LGPL-3.0",
+  "frameworks": "arduino",
+  "platforms": ["espressif32","esp8266"]
+}

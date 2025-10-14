@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ESP32 Configuration Interface</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="favicon.png" sizes="32x32"><!--https://www.freepik.com/-->
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <script type="text/javascript" src="script.js"></script>
+</head>
+<body>
+  <h1>ESP32 Configuration Manager</h1>
+  <div class="content">
+    <div class="card-grid">
+      <div class="card">
+        <form action="/wifi" method="POST">
+          <p>
+            <h3>WiFi</h3>
+            <label for="ssid">SSID</label>
+            <input type="text" id="ssid" name="ssid" value="%wifi:ssid%"><br>
+            <label for="wpass">Password</label>
+            <input type="password" id="wpass" name="wpass" value="%wifi:wpass%"><br>
+            <label for="ip">IP Address (*)</label>
+            <input type="text" id="ip" name="ip" value="%wifi:ip%"><br>
+            <label for="ip">Gateway (*)</label>
+            <input type="text" id="gateway" name="gateway" value="%wifi:gateway%"><br>
+            <label for="ip">Subnet (*)</label>
+            <input type="text" id="subnet" name="subnet" value="%wifi:subnet%"><br>
+            <label>(*) Optional</label><br><br>
+            <input type="submit" value="Submit">
+          </p>
+        </form>
+      </div>
+      <div class="card">
+        <form action="/mqtt" id="mqtt" method="POST">
+          <p>
+            <h3>MQTT</h3>
+            <label for="url">URL</label>
+            <input type="text" id="url" name="url" value="%mqtt:url%"><br>
+            <label for="port">Port</label>
+            <input type="number" id="port" name="port" value=%mqtt:port%><br>
+            <label for="user">User</label>
+            <input type="text" id="user" name="user" value="%mqtt:user%"><br>
+            <label for="pass">Password</label>
+            <input type="password" id="pass" name="pass" value="%mqtt:pass%"><br>
+            <label for="devid">Device ID</label>
+            <input type="text" id="devid" name="devid" value="%mqtt:devid%"><br>
+            <label for="fprint">Server fingerprint (SHA1)</label><br>
+            <input type="text" id="fprint" name="fprint" value="%mqtt:fprint%"><br><br>
+            <input type="submit" value="Submit">
+          </p>
+        </form>
+      </div>
+      <div class="card">
+        <form action="/serial" method="POST">
+          <p>
+            <h3>Serial Port</h3>
+            <label for="speed">Speed</label>
+            <input type="number" id="speed" name="speed" min=75 max=5000000 value=%serial:speed%><br>
+            <label for="bits">Data bits</label>
+            <input type="number" id="bits" name="bits" min=5 max=8 value=%serial:bits%><br>
+            <label for="stop">Stop bits</label>
+            <input type="number" id="stop" name="stop" min=1 max=2 value=%serial:stop%><br>
+            <label for="parity" id="parity">Parity</label>
+              <input type="radio" id="parityn" name="parity" value="none"/>NONE
+              <input type="radio" id="paritye" name="parity" value="even"/>EVEN
+              <input type="radio" id="parityo" name="parity" value="odd"/>ODD<br/><br>
+            <input type="submit" value="Submit">
+          </p>
+        </form>
+      </div>
+      <div class="card">
+        <form id="postnode">
+          <p>
+            <div class="container">
+              <h2><code>JSON</code> Data Structure</h2>
+              <input name="file" accept=".json" type="file" id="file_input" />
+              <div id="message"></div>
+            </div><br>
+            <textarea rows="40" cols="100" id="nodearea" name="node"></textarea><br><br>
+            <div id="linecol"></div><br>
+            <input type="button" id="validate" value="Validate">
+            <input type="button" id="prettify" value="Prettify">
+            <input type="button" id="minify" value="Minify">
+            <input type="submit" value="Submit">
+          </p>
+        </form>
+      </div>
+      <div class="card">
+        <form action="/reset" method="POST">
+          <p>
+            <h3>Done!</h3>
+            <input type="submit" value="Reset">
+          </p>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+<script>
+  var paritysel="%serial:parity%";
+</script>
+</html>

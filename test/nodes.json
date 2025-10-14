@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Goodrive20#1",
+    "type": "rtu",
+    "id": 1,
+    "compactRequest": true,
+    "order": "",
+    "nodes": [
+      {"name": "ComCtrlCmd", "type": "HREG", "address": 8192, "off": 0, "gain": 1, "unit": ""},
+      {"name": "ComSetFreq", "type": "HREG", "address": 8193, "off": 0, "gain": 100, "unit": "Hz"},
+      {"name": "PIDRefRange", "type": "HREG", "address": 8194, "off": 0, "gain": 10, "unit": "%"},
+      {"name": "OpFreq", "type": "HREG", "address": 12288, "off": 0, "gain": 1, "unit": "Hz"},
+      {"name": "SetFreq", "type": "HREG", "address": 12289, "off": 0, "gain": 1, "unit": "Hz", "delta": 3},
+      {"name": "VBus", "type": "HREG", "address": 12290, "off": 0, "gain": 1, "unit": "V", "mintime": 3.0, "maxtime": 120, "delta": 5}
+    ]
+  },
+  {
+    "name": "ESP32-I/O",
+    "type": "io",
+    "nodes": [
+      {"name": "vvs", "type": "ai", "pin": 34, "off": 0, "gain": 409.6, "bits": 12, "unit": "%", "mintime": 10, "maxtime": 300, "delta": 0.5},
+      {"name": "lsw1", "type": "di", "pin": 25, "inv": false, "mintime": 1, "maxtime": 600},
+      {"name": "li1", "type": "do", "pin": 26, "init": true, "inv": true},
+      {"name": "vva", "type": "pwm", "pin": 27, "off": 0, "gain": 2.55, "freq": 5000, "bits": 8, "init": 25.0, "unit": "%"}
+    ]
+  },
+  {
+    "name": "Sensors",
+    "type": "can",
+    "nodes": [
+      {"name": "spd", "type": "int", "filter": 1234, "extf": false}
+    ]
+  }
+]

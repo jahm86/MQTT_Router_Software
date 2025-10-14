@@ -1,0 +1,33 @@
+# PlatformIO build environments and dependencies
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# PlatformIO project configuration files
+.clang_complete
+gcc-flags.json
+pio
+
+# VSCode specific files
+.vscode/
+# Optionally, you might want to keep some .vscode files for shared configurations,
+# but often it's better to ignore the entire directory or specific sub-files.
+# For example, to ignore only user-specific settings:
+# .vscode/settings.json
+# .vscode/launch.json
+# .vscode/tasks.json
+
+# Build artifacts (if not already covered by .pio/)
+firmware.bin
+firmware.elf
+*.hex
+
+# Temporary files and logs
+*.log
+*.tmp
+*~
+tmp/
+
+# Operating system specific files
+.DS_Store
+Thumbs.db
