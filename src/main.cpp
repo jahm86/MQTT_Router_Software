@@ -282,9 +282,9 @@ void onMqttConnect(bool sessionPresent) {
 
 // MQTT disconnection notification callback
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  (void) reason;
 
-  Serial.println(F("Disconnected from MQTT."));
+  Serial.print(F("Disconnected from MQTT. Reason number: "));
+  Serial.println((int) reason);
 
   if (dataBus.isStarted()) {
     log_d("Suspending data bus");
@@ -369,12 +369,13 @@ void setup() {
   Serial.println(CFG_MODE_SW);
 
   // Test ESP log levels
-  Serial.println("Testing ESP log levels");
+  Serial.println("Testing ESP log levels...");
   log_v("Verbose");
   log_d("Debug");
   log_i("Info");
   log_w("Warning");
   log_e("Error");
+  Serial.println("ESP log levels test ended!");
 
   // https://randomnerdtutorials.com/esp32-vs-code-platformio-spiffs/
   // pio run -t uploadfs
