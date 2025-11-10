@@ -4,7 +4,7 @@
 
 #include "DataIntegrator.h"
 #include "diutils.h"
-#include <TWAI_Object.h>
+#include <driver/twai.h>
 
 
 /**
@@ -18,6 +18,10 @@ public:
     int build(JsonObject source, int index) override;
     const char* type() override { return "CANBUS"; }
     static DataSource* Create() { return new DsCANBUS(); }
+
+private:
+    twai_filter_config_t m_filter;
+    twai_mode_t m_mode;
 };
 
 

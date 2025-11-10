@@ -7,24 +7,45 @@
 
 // ************************************** CANSignalNode ************************************** //
 
-TWAI_Object::twai_filter_type_t setType(String typeS) {
-    if (typeS == "mask") {
-        return TWAI_Object::twai_filter_type_t::TWAI_FILTER_TYPE_MASK;
-    } else if (typeS == "list") {
-        return TWAI_Object::twai_filter_type_t::TWAI_FILTER_TYPE_LIST;
+uint32_t value2uint32_t(JsonVariant value) { // TODO: check for string
+    const char *vs = value.as<const char*>();
+    if (vs == nullptr) {
+        return value.as<uint32_t>();
     }
-    return TWAI_Object::twai_filter_type_t::TWAI_FILTER_TYPE_RANGE;
+    char *endPtr;
+    // Assuming that, if string, is hex
+    uint32_t ui32value = std::strtol(vs, &endPtr, 16);
+    return ui32value;
+}
+
+twai_filter_config_t getFilter(JsonObject filter) { // TODO: interpret and fix
+    if (filter.isNull())
+        return TWAI_FILTER_CONFIG_ACCEPT_ALL();
+    if (!filter["code"].isNull()) {
+        uint32_t code = value2uint32_t(filter["code"]);
+        uint32_t mask = value2uint32_t(filter["mask"]);
+        return {.acceptance_code = code, .acceptance_mask = mask, .single_filter = true};
+    }
+    uint32_t code1 = value2uint32_t(filter["code1"]);
+    uint32_t mask1 = value2uint32_t(filter["mask1"]);
+    uint32_t code2 = value2uint32_t(filter["code2"]);
+    uint32_t mask2 = value2uint32_t(filter["mask2"]);
+    return {
+        .acceptance_code = (code1 & 0xffff) | ((code2 << 16) & 0xffff0000),
+        .acceptance_mask = (mask1 & 0xffff) | ((mask2 << 16) & 0xffff0000),
+        .single_filter = false};
 }
 
 int DsCANBUS::build(JsonObject source, int index) {
-    TWAI_Object::twai_user_filter_t filter;
-
-    filter.id = source["id"];
-    filter.mask_or_end_id = source["mask"];
-    filter.is_extended = source["ext"] | false;
-    filter.type = setType(source["type"]);
-
-    TWAI_Object::twai.set_filters(&filter, 1);
+    m_filter = getFilter(source["filter"]);
+    const char* mode = source["mode"].as<const char*>();
+    m_mode = TWAI_MODE_NORMAL;
+    if (mode != nullptr) {
+        if (strcmp(mode, "listen") == 0)
+            m_mode = TWAI_MODE_LISTEN_ONLY;
+        else if (strcmp(mode, "noack") == 0)
+            m_mode = TWAI_MODE_NO_ACK;
+    }
 
     return DataSource::build(source, index);
 }
@@ -48,18 +69,17 @@ bool CANBUSTaskQueue::addId(uint32_t id, CANSignalNodeBase *node) {
 
 CANBUSTaskQueue::CANBUSTaskQueue() : m_mutex(xSemaphoreCreateMutex()), m_id_map() {
     m_task = new extTask("CAN_RX", 1024, tskIDLE_PRIORITY + 2, [this]{
-        TWAI_Object::can_event_t event;
+        twai_message_t rx_msg;
 
         while(true) {
             // Wait for message (blocking operation)
-            if (xQueueReceive(TWAI_Object::twai.get_event_queue(), &event, portMAX_DELAY)) {
+            if (twai_receive(&rx_msg, portMAX_DELAY) == ESP_OK) {
                 LockGuard<xSemaphoreHandle> lg(m_mutex); // change by this->m_mutex if error
-                
-                auto id_it = m_id_map.find(event.message.identifier);
-                if (!event.is_error && id_it != m_id_map.end()) {
+                auto id_it = m_id_map.find(rx_msg.identifier);
+                if (id_it != m_id_map.end()) {
                     CANSignalNodeBase* node = id_it->second;
                     // Now, send the message to the node
-                    node->processCanMessage(event.message);
+                    node->processCanMessage(rx_msg);
                 }
             }
         }
@@ -144,7 +164,7 @@ void CANSignalNodeBase::request() {
         
         packData(message, value);
         
-        if (!TWAI_Object::twai.send(message)) {
+        if (twai_transmit(&message, pdMS_TO_TICKS(100)) != ESP_OK) {
             sendError(DIError::BUS_REQ_ERROR, "CAN send failed");
         }
     }

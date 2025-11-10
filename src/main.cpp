@@ -35,7 +35,6 @@
 #include <ArduinoJson.h>
 #include <DataIntegrator.h>
 #include <diutils.h>
-#include <TWAI_Object.h>
 
 //AsyncWebServer server(WEBSERVER_PORT);
 AsyncMqttClient mqttClient;
