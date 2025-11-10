@@ -44,7 +44,7 @@ bool cfg_mode_http_server = true;
 DataBus dataBus;
 // Create a ModbusRTU client instance
 // The RS485 module has no halfduplex, so the parameter with the DE/RE pin is required!
-ModbusClientRTU MBCRTU(REDEPIN);
+ModbusClientRTU MBCRTU(RS485_DEREPIN);
 Ticker MbRequestTicker;
 // Create custom server instance
 CustomServer* server;
@@ -539,11 +539,11 @@ void setup() {
     log_d("Returned value %d", mode_config);
     log_d("Setting up Serial connection for Modbus RTU");
     RTUutils::prepareHardwareSerial(SerialRef);
-    SerialRef.begin(serial_speed, mode_config, RXPIN, TXPIN);
+    SerialRef.begin(serial_speed, mode_config, RS485_ROPIN, RS485_DIPIN);
 
     // Set up ModbusRTU client
     // Set message timeout
-    MBCRTU.setTimeout(TIMEOUT_INTERVAL);
+    MBCRTU.setTimeout(RS485_TIMEOUT_INTERVAL);
     // Start ModbusRTU background task
     StreamLink::Instance().SetNew(&MBCRTU);
     MBCRTU.begin(SerialRef);
