@@ -1,4 +1,4 @@
-var paritysel, message, nodearea;
+var paritysel, message, nodearea, socksel;
 
 window.onload = setup;
 
@@ -17,6 +17,15 @@ function setup() {
   else
     document.querySelector("#parityn").checked = true;
 
+  if (socksel === "mqtts")
+    document.querySelector("#sockmqtts").checked = true;
+  else if (socksel === "ws")
+    document.querySelector("#sockws").checked = true;
+  else if (socksel === "wss")
+    document.querySelector("#sockwss").checked = true;
+  else
+    document.querySelector("#sockmqtt").checked = true;
+
   document.querySelector("#file_input").addEventListener("change", async (ev) => {
     const file = ev.target.files[0];
     const text = await file.text();
@@ -26,10 +35,11 @@ function setup() {
 
   document.querySelector("#mqtt").addEventListener("submit", async (e) => {
     const formdata = new FormData(e.target);
-    text = formdata.get("fprint");
-    text = text.replaceAll(" ", "");
-    text = text.replaceAll(":", "");
-    formdata.set("fprint", text);
+    const file = formdata.get("cacert");
+    if (file) {
+      formdata.append("file", file);
+      formdata.set("cacert", file.name);
+    }
   });
 
   nodearea.addEventListener("selectionchange", () => {
@@ -47,13 +57,14 @@ function setup() {
   })
 
   document.querySelector("#postnode").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    let formData = new FormData();
-    formData.append('node', nodearea.value);
+     e.preventDefault();
+    const formdata = new FormData();
+    const blob = new Blob([nodearea.value], { type: "application/json" });
+    formdata.append('file', blob)
     try {
       await fetch("/nodes", {
         method: 'POST',
-        body: formData,
+        body: formdata,
       });
     } catch (e) {
       console.log(e);

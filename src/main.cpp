@@ -30,14 +30,14 @@
 #include "CustomServer.h"
 
 // External libraries
-#include <AsyncMqtt_Generic.h>
+#include <PsychicMqttClient.h>
 #include <ModbusClientRTU.h>
 #include <ArduinoJson.h>
 #include <DataIntegrator.h>
 #include <diutils.h>
 
 //AsyncWebServer server(WEBSERVER_PORT);
-AsyncMqttClient mqttClient;
+PsychicMqttClient mqttClient;
 Ticker mqttConnectTicker;
 Ticker wifiConnectTicker;
 bool cfg_mode_http_server = true;
@@ -57,11 +57,13 @@ String netw_ipaddr;
 String netw_gateway;
 String netw_subnet;
 // MQTT server
-String mqtt_server;
-int mqtt_port;
+String mqtt_server_uri;
 String mqtt_user;
 String mqtt_password;
 String mqtt_topic;
+// Certificate pointer and size
+size_t rootCAlen = 0;
+char *root_ca = nullptr;
 
 // *** mqtt I/O topics *** //
 String mqtt_topic_in;
@@ -70,6 +72,22 @@ void setTopics() {
   mqtt_topic_in = mqtt_topic + String(in_subtopic);
   mqtt_topic_out = mqtt_topic + String(out_subtopic);
   log_d("Topic in: %s, Topic out: %s", mqtt_topic_in.c_str(), mqtt_topic_out.c_str());
+}
+
+// Assembles mqtt URI, based on socket type, URL and port
+String assemble_uri(const char *socket_type, const char *url, int port) {
+  // TODO: test if url already comes with socket type and/or port
+  if (strlen(url) == 0)
+    return "";
+  String uri("");
+  if (strlen(socket_type) > 0) {
+    uri += socket_type;
+    uri += "://";
+  }
+  uri += url;
+  if (port > 0)
+    uri += ":" + String(port);
+  return uri;
 }
 
 // Expression function to encode data_b, stop_b and parity_b into an unique value for switch statement
@@ -161,14 +179,6 @@ void connectToMqtt() {
   mqttClient.connect();
 }
 
-// Function to disconnect MQTT client
-void disconnectMqtt() {
-  if (mqttClient.connected()) {
-    Serial.println("Disconnecting MQTT...");
-    mqttClient.disconnect(true);
-  }
-}
-
 // WiFi stack generic callback
 void WiFiEvent(WiFiEvent_t event) {
   switch (event) {
@@ -209,7 +219,6 @@ void WiFiEvent(WiFiEvent_t event) {
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       mqttConnectTicker.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
       Serial.println("WiFi lost connection");
-      disconnectMqtt();
       wifiConnectTicker.once(3, connectToWifi);
       break;
 #else
@@ -248,7 +257,6 @@ void WiFiEvent(WiFiEvent_t event) {
     case SYSTEM_EVENT_STA_DISCONNECTED:
       mqttConnectTicker.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
       Serial.println("WiFi lost connection");
-      disconnectMqtt();
       wifiConnectTicker.once(3, connectToWifi);
       break;
 #endif
@@ -259,12 +267,62 @@ void WiFiEvent(WiFiEvent_t event) {
   }
 }
 
+// MQTT connection error callback
+void onMqttError(esp_mqtt_error_codes_t error) {
+  const __FlashStringHelper *error_type, *connect_return_code;
+  // Search error type
+  switch (error.error_type ) {
+  case esp_mqtt_error_type_t::MQTT_ERROR_TYPE_NONE:
+    error_type = F("No MQTT error");
+    break;
+  case esp_mqtt_error_type_t::MQTT_ERROR_TYPE_TCP_TRANSPORT:
+    error_type = F("MQTT TCP transport error");
+    break;
+  case esp_mqtt_error_type_t::MQTT_ERROR_TYPE_CONNECTION_REFUSED:
+    error_type = F("MQTT connection refused");
+    break;
+  default:
+    error_type = F("MQTT unknown error");
+  }
+  // Search connection return code
+  switch (error.connect_return_code)
+  {
+  case esp_mqtt_connect_return_code_t::MQTT_CONNECTION_ACCEPTED:
+    connect_return_code = F("Connection accepted");
+    break;
+  case esp_mqtt_connect_return_code_t::MQTT_CONNECTION_REFUSE_PROTOCOL:
+    connect_return_code = F("Wrong protocol");
+    break;
+  case esp_mqtt_connect_return_code_t::MQTT_CONNECTION_REFUSE_ID_REJECTED:
+    connect_return_code = F("ID rejected");
+    break;
+  case esp_mqtt_connect_return_code_t::MQTT_CONNECTION_REFUSE_SERVER_UNAVAILABLE:
+    connect_return_code = F("Server unavailable");
+    break;
+  case esp_mqtt_connect_return_code_t::MQTT_CONNECTION_REFUSE_BAD_USERNAME:
+    connect_return_code = F("Wrong user");
+    break;
+  case esp_mqtt_connect_return_code_t::MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED:
+    connect_return_code = F("Wrong username or password");
+    break;
+  default:
+    connect_return_code = F("Unknown return error");
+  }
+  // Print the error
+  Serial.print(F("MQTT error reported.\nError type: "));
+  Serial.println(error_type);
+  Serial.print(F("MQTT connection return code: "));
+  Serial.println(connect_return_code);
+  Serial.print(F("Error number from underlying socket: "));
+  Serial.println(error.esp_transport_sock_errno);
+}
+
 // MQTT connection notification callback
 void onMqttConnect(bool sessionPresent) {
-  Serial.printf("Connected to MQTT broker: %s, port: %d, Tx Topic: %s Rx Topic: %s\n"
-    , mqtt_server.c_str(), mqtt_port, mqtt_topic_out.c_str(), mqtt_topic_in.c_str());
+  Serial.printf("Connected to MQTT broker: %s, Tx Topic: %s Rx Topic: %s\n"
+    , mqtt_server_uri.c_str(), mqtt_topic_out.c_str(), mqtt_topic_in.c_str());
 
-  Serial.printf("Session present: %b\n", sessionPresent);
+  Serial.printf("Session present: %s\n", sessionPresent ? "true" : "false");
 
   uint16_t packetIdSub = mqttClient.subscribe(mqtt_topic_in.c_str(), 2);
   Serial.printf("Subscribing at QoS 2, packetId: %d\n", packetIdSub);
@@ -281,46 +339,41 @@ void onMqttConnect(bool sessionPresent) {
 }
 
 // MQTT disconnection notification callback
-void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+void onMqttDisconnect(bool sessionPresent) {
 
-  Serial.print(F("Disconnected from MQTT. Reason number: "));
-  Serial.println((int) reason);
+  Serial.print(F("Disconnected from MQTT. Session present: "));
+  Serial.println(sessionPresent);
 
   if (dataBus.isStarted()) {
     log_d("Suspending data bus");
     dataBus.suspend();
   }
-
-  if (WiFi.isConnected())
-  {
-    mqttConnectTicker.once(2, connectToMqtt);
-  }
 }
 
 // MQTT subcribtion response callback
-void onMqttSubscribe(const uint16_t& packetId, const uint8_t& qos) {
-  Serial.printf("Subscribe acknowledged.  packetId: %d  qos: %d\n", packetId, qos);
+void onMqttSubscribe(int msgId) {
+  Serial.printf("Subscribe acknowledged, msgid: %d", msgId);
 }
 
 // MQTT unsubscription response callback
-void onMqttUnsubscribe(const uint16_t& packetId) {
-  Serial.printf("Unsubscribe acknowledged.  packetId: %d\n", packetId);
+void onMqttUnsubscribe(int msgId) {
+  Serial.printf("Unsubscribe acknowledged, msgId: %d\n", msgId);
 }
 
 // MQTT message notification callback
-void onMqttMessage(char* topic, char* payload, const AsyncMqttClientMessageProperties& properties,
-                   const size_t& len, const size_t& index, const size_t& total) {
+void onMqttMessage(char *topic, char *payload, int retain, int qos, bool dup) {
+  size_t len = strlen(payload);
 
-  log_d("Publish received:  topic: %s  qos: %d  dup: %d  retain: %d  len: %d  index: %d  total: %d"
-    , topic, properties.qos, properties.dup, properties.retain, len, index, total);
+  log_d("Publish received:  topic: %s  qos: %d  dup: %d  retain: %d  len: %d",
+    topic, qos, dup, retain, len);
 
   DIError::ErrCode accept = dataBus.receive(payload, len);
   log_d("Response: %s", DIError::ErrStr(accept));
 }
 
 // MQTT message publication response callback
-void onMqttPublish(const uint16_t& packetId) {
-  log_d("Publish acknowledged:  packetId: %d", packetId);
+void onMqttPublish(int msgId) {
+  log_d("Publish acknowledged, msgId: %d", msgId);
   dataBus.ack();
 }
 
@@ -338,14 +391,7 @@ void onSendJson(const char* output, size_t size) {
 void setup() {
   cfg_mode_http_server = true;
   // File handlers
-  File nodesFile, paramsFile;
-
-#if ASYNC_TCP_SSL_ENABLED
-  // Server SHA1 fingerprint. Can be obtained with command:
-  // sudo openssl x509 -noout -fingerprint -sha1 -inform pem -in /path/to/cert.[pem/crt]
-  uint8_t MQTT_SERVER_FINGERPRINT[SHA1_SIZE];
-  String mqtt_fprint;
-#endif
+  File nodesFile, paramsFile, certFile;
 
   // Parameters (Only serial parameters in local scope)
   // Serial devides port
@@ -363,8 +409,10 @@ void setup() {
   // Wait for serial por to be available to start
   while (!Serial) {}
   Serial.println(F("ESP32 Modbus to MQTT server"));
+  Serial.print(F("Board: "));
   Serial.println(F(ARDUINO_BOARD));
-  Serial.println(F(ASYNC_MQTT_GENERIC_VERSION));
+  Serial.print(F("MQTT cliente version: "));
+  Serial.println(F(PSYCHIC_MQTT_CLIENT_VERSION_STR));
   Serial.print("You can enter HTTP server configuration mode by pressing button associated to digital port #");
   Serial.println(CFG_MODE_SW);
 
@@ -450,22 +498,40 @@ void setup() {
     }
     // ********** Getting MQTT parameters ********** //
     log_d("Getting MQTT parameters");
-    mqtt_server = doc[F(MQ_OBJ_NAME)][F(MQ_URL_KEY)] | EMPTY_STR; // test.mosquitto.org
-    mqtt_port = doc[F(MQ_OBJ_NAME)][F(MQ_PORT_KEY)].as<int>();
+    mqtt_server_uri = assemble_uri(
+      doc[F(MQ_OBJ_NAME)][F(MQ_SOCK_TYPE)] | def_sock,
+      doc[F(MQ_OBJ_NAME)][F(MQ_URL_KEY)] | EMPTY_STR,
+      doc[F(MQ_OBJ_NAME)][F(MQ_PORT_KEY)].as<int>()
+    );
     mqtt_user = doc[F(MQ_OBJ_NAME)][F(MQ_USER_KEY)] | EMPTY_STR;
     mqtt_password = doc[F(MQ_OBJ_NAME)][F(MQ_PASS_KEY)] | EMPTY_STR;
     mqtt_topic =  doc[F(MQ_OBJ_NAME)][F(MQ_DEVID_KEY)] | EMPTY_STR;
-#if ASYNC_TCP_SSL_ENABLED
-    mqtt_fprint = doc[F(MQ_OBJ_NAME)][F(MQ_FI_PRINT)] | EMPTY_STR;
-    if (!stringHex2ByteArray(mqtt_fprint, (uint8_t*) MQTT_SERVER_FINGERPRINT, SHA1_SIZE)) {
-      Serial.println("SHA1 MQTT server fingerprint format not valid");
-      break;
-    }
-#endif
-    log_d("MQTT server: \"%s\"  Port: %d  User: \"%s\"  Pwd: \"%s\"  Topic: \"%s\"",
-    mqtt_server.c_str(), mqtt_port, mqtt_user.c_str(), mqtt_password.c_str(), mqtt_topic.c_str());
+    String origin_ca_name = doc[F(MQ_OBJ_NAME)][F(CERT_OBJ_NAME)] | EMPTY_STR;
+    log_d("MQTT server URI: \"%s\"  User: \"%s\"  Pwd: \"%s\"  Topic: \"%s\"",
+    mqtt_server_uri.c_str(), mqtt_user.c_str(), mqtt_password.c_str(), mqtt_topic.c_str());
     setTopics();
-    if(mqtt_server.isEmpty() || mqtt_user.isEmpty() ||mqtt_topic.isEmpty()) {
+    // Detects TLS connection and open certificate
+    if (mqtt_server_uri.startsWith(sock_mqtts) || mqtt_server_uri.startsWith(sock_wss)) {
+      log_d("Obtain certificate");
+      if(SPIFFS.exists(Cert_path)) {
+        certFile = SPIFFS.open(Cert_path, "rb");
+        rootCAlen = certFile.size();
+        root_ca = (char*) malloc((rootCAlen + 1) * sizeof(char));
+        certFile.readBytes(root_ca, rootCAlen);
+        root_ca[rootCAlen] = '\0';
+        certFile.close();
+        log_d("Certificate of %d bytes read", rootCAlen);
+        log_d("Certificate content:\n%s", root_ca);
+        // If the file is not .der, setCACert gets in trouble with rootCAlen != 0
+        if (!(origin_ca_name.endsWith(ext_der)) || origin_ca_name.endsWith(ext_cer)) {
+          log_d("File is not \"DER\", setting root CA length to 0");
+          rootCAlen = 0;
+        }
+      } else {
+        Serial.println(F("Warning: Certificate not found for secure connection!"));
+      }
+    }
+    if(mqtt_server_uri.isEmpty() || mqtt_user.isEmpty() ||mqtt_topic.isEmpty()) {
       Serial.println("MQTT parameters not valid");
       break;
     }
@@ -500,7 +566,7 @@ void setup() {
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
     Serial.println(IP);
-    server = new CustomServer(DEF_HTTP_PORT, Params_path, Nodes_path);
+    server = new CustomServer(DEF_HTTP_PORT, Params_path, Nodes_path, Cert_path);
     server->start();
   } else {
     // Enter MQTT mode
@@ -554,6 +620,7 @@ void setup() {
     WiFi.onEvent(WiFiEvent);
 
     // Set MQTT Event callback
+    mqttClient.onError(onMqttError);
     mqttClient.onConnect(onMqttConnect);
     mqttClient.onDisconnect(onMqttDisconnect);
     mqttClient.onSubscribe(onMqttSubscribe);
@@ -564,12 +631,11 @@ void setup() {
 
     // Stablish MQTT connection parameters
     log_d("Setting MQTT parameters");
-    mqttClient.setServer(mqtt_server.c_str(), mqtt_port);
+    mqttClient.setServer(mqtt_server_uri.c_str());
+    mqttClient.setBufferSize(1024);
     mqttClient.setCredentials(mqtt_user.c_str(), mqtt_password.c_str());
-#if ASYNC_TCP_SSL_ENABLED
-    mqttClient.setSecure(true);
-    mqttClient.addServerFingerprint((const uint8_t *)MQTT_SERVER_FINGERPRINT);
-#endif
+    if (root_ca != nullptr)
+      mqttClient.setCACert(root_ca, rootCAlen);
 
     // Try initial connection to WiFi
     log_d("Here we go, WiFi!");

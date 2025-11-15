@@ -1,10 +1,10 @@
 
 #include "CustomServer.h"
 #include "definitions.h"
-#include <SPIFFS.h>
 #include <ArduinoJson.h>
 #include <vector>
 #include <ESPAsyncWebServer.h>
+#include <sstream>
 
 using namespace std;
 
@@ -16,8 +16,8 @@ using namespace std;
 // is also set, the last path in object will be object.
 static JsonVariant searchInto(JsonObject object, const char* object_name, bool force_creation = false, bool last_also_object = false);
 
-CustomServer::CustomServer(uint16_t server_port, const char* params_file, const char* nodes_file)
-    : m_server(nullptr), m_port(server_port), m_params_f(params_file), m_nodes_f(nodes_file) {}
+CustomServer::CustomServer(uint16_t server_port, const char* params_file, const char* nodes_file, const char* cert_file)
+    : m_server(nullptr), m_port(server_port), m_params_f(params_file), m_nodes_f(nodes_file), m_cert_f(cert_file), file_map({}) {}
 
 CustomServer::~CustomServer() {
     delete m_server;
@@ -87,7 +87,9 @@ void CustomServer::startServer() {
     log_d("MQTT parameters save requested");
     CustomServer::save(m_params_f, request, MQ_OBJ_NAME);
     request->redirect("/");
-  });
+  }, [this](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final){
+    log_d("Original file name: %s", filename);
+    handleUpload(request, String(m_cert_f), index, data, len, final);});
   // Request Serial parameters
   m_server->on("/serial", HTTP_POST, [this](AsyncWebServerRequest* request) {
     log_d("Serial parameters save requested");
@@ -97,8 +99,11 @@ void CustomServer::startServer() {
   // Request save communicating nodes parameters
   m_server->on("/nodes", HTTP_POST, [this](AsyncWebServerRequest* request) {
     log_d("Data Nodes save requested");
-    CustomServer::saveItem(m_nodes_f, request, ND_OBJ_NAME);
+    // CustomServer::saveItem(m_nodes_f, request, ND_OBJ_NAME);
     request->redirect("/");
+  }, [this](AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final){
+    log_d("Original file name: %s", filename);
+    handleUpload(request, String(m_nodes_f), index, data, len, final);
   });
   // Request communicating nodes file
   m_server->on("/nodes", HTTP_GET, [this](AsyncWebServerRequest* request) {
@@ -114,32 +119,43 @@ void CustomServer::startServer() {
   m_server->begin();
 }
 
-// Save raw value of item given, found in request to file file_name. Retruns true if save is sussesfull.
-bool CustomServer::saveItem(const char* file_name, AsyncWebServerRequest* request, const char* item) {
-  // Search item in request
-  log_d("Searching for %s...", item);
-  if (!request->hasParam(item, true)) {
-    log_e("Failed to find item");
-    return false;
+// Handles file upload from client to ESP web server
+void CustomServer::handleUpload(AsyncWebServerRequest *request, const String& filename, size_t index, uint8_t *data, size_t len, bool final) {
+  // Find file_handle in file_map. If does not exist, create one
+  const char *filename_c = filename.c_str();
+  std::string filename_s(filename_c);
+  auto result = file_map.insert({filename_s, new File()}); 
+  auto file_it = result.first; // Element iterator (existing or new)
+  if (result.second) {
+    // Enters here if not existed before
+    log_d("Creating file handle for: %s", filename_c);
   }
-  const String& message = request->getParam(item, true)->value();
-  // Open file for writing
-  log_d("Found! Opening file");
-  File file = SPIFFS.open(file_name, FILE_WRITE);
-  if(!file) {
-    log_e("Failed to open file for writing");
-    return false;
+  File &file_handle = *file_it->second;
+
+  if (!index) {
+    // First chunk of the upload
+    log_d("UploadStart: %s\n", filename_c);
+    // Open a file for writing, or prepare a buffer to store the data
+    // For example, to save to SPIFFS:
+    file_handle = SPIFFS.open(filename, "wb");
   }
-  // Save to file
-  log_d("Content to save:\n%s", message.c_str());
-  if (!file.print(message)) {
-    log_e("Failed to write content");
-    file.close();
-    return false;
+
+  // Write the current chunk of data
+  // For example, to save to SPIFFS:
+  if (file_handle) {
+     file_handle.write(data, len);
   }
-  log_d("Save Susessfull!!!");
-  file.close();
-  return true;
+
+  log_d("Received %u bytes of data for %s\n", len, filename_c);
+
+  if (final) {
+    // Last chunk of the upload
+    log_d("UploadEnd: %s, total size: %u\n", filename_c, index + len);
+    // Close the file or process the complete data
+    if (file_handle) {
+      file_handle.close();
+    }
+  }
 }
 
 // Save JSON object by file file_name, object name path and list of request parameters. Retruns true if save is sussesfull.
@@ -162,7 +178,7 @@ bool CustomServer::save(const char* file_name, AsyncWebServerRequest* request, c
   // Extracting parameters from request
   int params = request->params();
   for (int index = 0; index < params; ++index) {
-    AsyncWebParameter* p = request->getParam(index);
+    const AsyncWebParameter* p = request->getParam(index);
     if (!p->isPost()) {
       log_e("Parameter should be post!");
       continue;

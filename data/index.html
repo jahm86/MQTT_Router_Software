@@ -31,9 +31,14 @@
         </form>
       </div>
       <div class="card">
-        <form action="/mqtt" id="mqtt" method="POST">
+        <form action="/mqtt" id="mqtt" method="POST" enctype="multipart/form-data">
           <p>
             <h3>MQTT</h3>
+            <label for="sock" id="sock">Socket type</label>
+              <input type="radio" id="sockmqtt" name="sock" value="mqtt"/>mqtt
+              <input type="radio" id="sockmqtts" name="sock" value="mqtts"/>mqtts
+              <input type="radio" id="sockws" name="sock" value="ws"/>ws
+              <input type="radio" id="sockwss" name="sock" value="wss"/>wss<br>
             <label for="url">URL</label>
             <input type="text" id="url" name="url" value="%mqtt:url%"><br>
             <label for="port">Port</label>
@@ -44,8 +49,8 @@
             <input type="password" id="pass" name="pass" value="%mqtt:pass%"><br>
             <label for="devid">Device ID</label>
             <input type="text" id="devid" name="devid" value="%mqtt:devid%"><br>
-            <label for="fprint">Server fingerprint (SHA1)</label><br>
-            <input type="text" id="fprint" name="fprint" value="%mqtt:fprint%"><br><br>
+            <label for="cacert">Server TLS Certificate</label>
+            <input name="cacert" accept=".crt,.der" type="file" id="cacert_input"/><br><br>
             <input type="submit" value="Submit">
           </p>
         </form>
@@ -98,5 +103,6 @@
 </body>
 <script>
   var paritysel="%serial:parity%";
+  var socksel="%mqtt:sock%"
 </script>
 </html>
