@@ -2,8 +2,6 @@
 
 A software tool used for communication between diverse protocols (Modbus, I/O, etc.) and MQTT clients. These protocols can be configured dynamically, without recompiling, as long as their drivers are included in the firmware.
 
-If you get trouble compiling, plaese refer to [this document](HowModifiedESPAsyncWebServer.md).
-
 ### Loading web server files
 
 The first time you load the firmware, and every time you make changes to web server contents into path **./data**, you must load the **SPIFFS** with these contents. There are 3 ways to do this:

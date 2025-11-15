@@ -57,7 +57,7 @@ function setup() {
   })
 
   document.querySelector("#postnode").addEventListener("submit", async (e) => {
-     e.preventDefault();
+    e.preventDefault();
     const formdata = new FormData();
     const blob = new Blob([nodearea.value], { type: "application/json" });
     formdata.append('file', blob)
