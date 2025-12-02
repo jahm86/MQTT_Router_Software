@@ -163,27 +163,54 @@ private:
  * instead of "LockGuard<xSemaphoreHandle> (m_mutex);"), otherwise the scope will dissapear in the same line,
  * and also the mutex locking
  */
-template<typename SemaphT>
+template<typename SemaphT = xSemaphoreHandle>
 class LockGuard {
 public:
 
   /**
-   * @brief Locks semaphore on creation.
-   * @param s Reference or pointer to semaphore
+   * @brief Locks semaphore on creation with optional timeout.
+   * @param s Reference to semaphore
+   * @param timeout Maximum time to wait (portMAX_DELAY by default, which means wait for ever)
    */
-  LockGuard(SemaphT& s) : m_s(s) { lock(); }
-  LockGuard(SemaphT* s) : m_s(*s) { lock(); }
+  LockGuard(SemaphT& s, TickType_t timeout = portMAX_DELAY) : m_s(s) {
+    BaseType_t result = xSemaphoreTake(m_s, timeout);
+    // Barrier after take
+    asm volatile("" : : : "memory"); // Compiler Memory Barrier
+    #if CONFIG_FREERTOS_UNICORE == 0
+      __sync_synchronize(); // Multicore hardware barrier
+    #endif
+    if (result == pdTRUE) {
+    // log_d("Lock acquired %p", &m_s); // Uncomment if suspect of bug caused by lockguard
+    } else {
+      log_e("Failed to acquire lock %p", &m_s);
+    }
+  }
 
   /**
    * @brief Unlocks semaphore on destruction.
    */
-  ~LockGuard() { xSemaphoreGive(m_s); }
-  //~LockGuard() { log_d("Unlocking"); xSemaphoreGive(m_s); }
+  ~LockGuard() {
+    // log_d("Releasing lock %p", &m_s); // Uncomment if suspect of bug caused by lockguard
+    // Barrier before give
+    #if CONFIG_FREERTOS_UNICORE == 0
+      __sync_synchronize();
+    #endif
+    asm volatile("" : : : "memory");
+    xSemaphoreGive(m_s);
+    // Barrier after give
+    asm volatile("" : : : "memory"); // Compiler Memory Barrier
+    #if CONFIG_FREERTOS_UNICORE == 0
+      __sync_synchronize();
+    #endif
+  }
+
+  // No copy/move operators
+  LockGuard(const LockGuard&) = delete;
+  LockGuard& operator=(const LockGuard&) = delete;
+  LockGuard(LockGuard&&) = delete;
+  LockGuard& operator=(LockGuard&&) = delete;
 
 private:
-  //inline void lock() { xSemaphoreTake(m_s, portMAX_DELAY); log_d("Locked");  }
-  inline void lock() { xSemaphoreTake(m_s, portMAX_DELAY); }
-  LockGuard(const LockGuard&);
   SemaphT& m_s;
 };
 
