@@ -327,7 +327,7 @@ private:
    */
   DIError::ErrCode findInDV(const string& name, JsonObject obj);
 
-  xSemaphoreHandle m_mutex;
+  Semaphore m_mutex;
   extTask* m_taskHandler;
 };
 

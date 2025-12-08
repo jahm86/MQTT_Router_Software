@@ -128,7 +128,7 @@ private:
   */
   static bool opIsWrite(Modbus::FunctionCode funcCode);
 
-  static xSemaphoreHandle m_mutex;                        ///< Semaphore for thread safety
+  static Semaphore m_mutex;                        ///< Semaphore for thread safety
   static unordered_map<uint16_t, Busy_t> busy_map;        ///< Tracks node's active requests
   static unordered_map<uint16_t, ModbusManager*> sm_map;  ///< Token-to-Manager mapping
   static bool respHandlerIsSet;

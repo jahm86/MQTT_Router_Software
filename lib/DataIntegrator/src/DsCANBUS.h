@@ -18,8 +18,10 @@ public:
     int build(JsonObject source, int index) override;
     const char* type() override { return "CANBUS"; }
     static DataSource* Create() { return new DsCANBUS(); }
+    bool run() {return m_twai->begin(); }
 
 private:
+    BaseProtocol *m_twai;
     twai_filter_config_t m_filter;
     twai_mode_t m_mode;
 };
@@ -35,16 +37,17 @@ class CANSignalNodeBase;
 class CANBUSTaskQueue
 {
 public:
-    CANBUSTaskQueue(StreamLink& other) = delete;
+    CANBUSTaskQueue(CANBUSTaskQueue& other) = delete;
     void operator=(const CANBUSTaskQueue&) = delete;
-    // Get this StreamLink instance
+    // Get this CANBUSTaskQueue instance
     static CANBUSTaskQueue& Instance();
 
     bool addId(uint32_t id, CANSignalNodeBase *node);
 private:
-    xSemaphoreHandle m_mutex;
+    Semaphore m_mutex;
     extTask* m_task;
     unordered_map<uint32_t, CANSignalNodeBase*> m_id_map;
+    bool m_started = false;
 
     CANBUSTaskQueue();
     ~CANBUSTaskQueue() = default;
@@ -84,7 +87,8 @@ private:
     uint32_t m_canId;
     bool m_extendedId;
     uint32_t m_mask;
-    bool m_isTx; // true para transmisión, false para recepción
+    bool m_isTx; // true transmission, false for reception
+    uint32_t m_timeout;
     uint8_t m_offset;
     AnalogCalc* m_calc;
     float m_last_value;
@@ -172,4 +176,4 @@ private:
     int unpackData(const uint8_t *payload) override { return unpackAsType(payload); }
 };
 
-    #endif // DS_CANBUS_H
+#endif // DS_CANBUS_H

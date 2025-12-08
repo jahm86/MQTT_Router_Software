@@ -158,7 +158,7 @@ void DataBus::startCom() {
   }
   // Starts data bus task
   DataBus* inst = this;
-  m_taskHandler = new extTask("DataBus", 4096, 1, [inst]() {
+  m_taskHandler = new extTask("DataBus", 4096, tskIDLE_PRIORITY + 1, [inst]() {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
     // Checks for resource usage in debug mode
     UBaseType_t uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
@@ -361,8 +361,8 @@ DIError::ErrCode DataBus::cmd(JsonObject obj) {
 
 //************************************** Data Source **************************************//
 
-DataSource::DataSource() : m_index(-1), m_dnv(), m_started(false) {
-  m_mutex = xSemaphoreCreateMutex();
+DataSource::DataSource() : m_index(-1), m_dnv(), m_started(false),
+m_mutex(Semaphore::create_mutex()) {
 #ifdef USE_TOAD_ALLOCATOR
   m_doc = new JsonDocument(Toadllocator::instance( __FILE__, __LINE__ ));
 #else
@@ -418,7 +418,7 @@ void DataSource::start() {
   }
   // Start data source task
   DataSource* inst = this;
-  m_taskHandler = new extTask(m_name.c_str(), 4096, 2, [inst]() {
+  m_taskHandler = new extTask(m_name.c_str(), 4096, tskIDLE_PRIORITY + 2, [inst]() {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
     // Checks for resource usage in debug mode
     UBaseType_t uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
@@ -445,7 +445,7 @@ void DataSource::start() {
 
 void DataSource::resetJSON() {
   log_d("Reset DataSource %s object", m_name.c_str());
-  LockGuard<xSemaphoreHandle> lg(m_mutex);
+  LockGuard lg(m_mutex);
   JsonObject object = m_doc->to<JsonObject>();
   object["name"] = m_name;
   object["nodes"].to<JsonArray>();
@@ -470,7 +470,7 @@ void DataSource::request(JsonObject* objP) {
 }
 
 bool DataSource::onResponse(string& name, DataIntegrator::OnObjectFillCallback ofcb) {
-  LockGuard<xSemaphoreHandle> lg(m_mutex);
+  LockGuard lg(m_mutex);
   JsonDocument& doc = *m_doc;
   JsonArray array = doc["nodes"].as<JsonArray>();
   bool found = false;

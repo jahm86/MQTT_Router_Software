@@ -3,7 +3,12 @@
 #define DIUTILS_H
 
 #include <limits>
-#include <ModbusClientRTU.h>
+#include <vector>
+#include <unordered_map>
+#include <type_traits>
+#include <memory>
+#include <string>
+#include <ModbusClientRTU.h> // TODO: Delete this, when DsModbus updated with new functionality
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -12,6 +17,448 @@
 #endif
 
 #define LEDC_MAX_CHANS 16
+
+
+//************************************** Scoped Lockguard **************************************//
+
+// Forward declaration
+class LockGuard;
+
+class Semaphore {
+private:
+  enum class SemaphoreType {
+    MUTEX,
+    RECURSIVE_MUTEX,
+    BINARY_SEMAPHORE,
+    COUNTING_SEMAPHORE
+    // More types, if needed...
+  };
+  xSemaphoreHandle m_handle;
+  SemaphoreType m_type;
+
+  Semaphore(SemaphoreType type, UBaseType_t max_count = 0, UBaseType_t initial_count = 0);
+
+public:
+
+  // Static creation methods
+  static Semaphore create_mutex() { return Semaphore(SemaphoreType::MUTEX); }
+  static Semaphore create_recursive_mutex() { return Semaphore(SemaphoreType::RECURSIVE_MUTEX); }
+  static Semaphore create_binary_semaphore() { return Semaphore(SemaphoreType::BINARY_SEMAPHORE); }
+  static Semaphore create_counting_semaphore(UBaseType_t max_count, UBaseType_t initial_count) {
+    return Semaphore(SemaphoreType::COUNTING_SEMAPHORE, max_count, initial_count);
+  }
+
+  // Destructor for semaphore
+  ~Semaphore();
+
+  // No copy
+  Semaphore(const Semaphore&) = delete;
+  Semaphore& operator=(const Semaphore&) = delete;
+
+  // Move
+  Semaphore(Semaphore&& other) noexcept;
+  Semaphore &operator=(Semaphore &&other) noexcept;
+
+  friend LockGuard;
+};
+
+/**
+ * @class LockGuard
+ * @brief RAII wrapper for mutex/semaphore management.
+ * @details This lock guard will lock with semaphore SemaphT until LockGuard instance goes out of scope
+ * @warning Please, avoid use of anonimous declaration for this class (declare "LockGuard lg(m_mutex);"
+ * instead of "LockGuard (m_mutex);"), otherwise the scope will dissapear in the same line,
+ * and also the locking
+ */
+class LockGuard {
+private:
+  Semaphore& m_s;
+
+public:
+
+  /**
+   * @brief Locks semaphore on creation with optional timeout.
+   * @param semaphore Reference to semaphore
+   * @param timeout Maximum time to wait (portMAX_DELAY by default, which means wait for ever)
+   */
+  LockGuard(Semaphore& semaphore, TickType_t timeout = portMAX_DELAY);
+
+  /**
+   * @brief Unlocks semaphore on destruction.
+   */
+  ~LockGuard();
+
+  // Avoids temporaries
+  LockGuard(Semaphore&& semaphore, TickType_t timeout = portMAX_DELAY) = delete;
+  // No copy/move operators
+  LockGuard(const LockGuard&) = delete;
+  LockGuard& operator=(const LockGuard&) = delete;
+  LockGuard(LockGuard&&) = delete;
+  LockGuard& operator=(LockGuard&&) = delete;
+};
+
+
+//************************************** Conversion templates **************************************//
+
+template<typename T>
+T convertTo(const std::string& value);
+
+template<typename T>
+const std::string convertFrom(T value);
+
+
+// Forward declaration
+class BaseProtocol;
+
+// Default value for pair, meaning not existing
+#define def_value {nullptr, false}
+
+
+//************************************** ProtocolEntry **************************************//
+
+/**
+ * @struct ProtocolEntry
+ * @brief Entry in the registry containing both configuration and protocol instance
+ */
+struct ProtocolEntry {
+  std::unordered_map<std::string, std::string> config;  ///< Configuration parameters
+  BaseProtocol* protocol;                               ///< Protocol instance (optional)
+  uint16_t referenceCount;                              ///< Number of users
+  bool autoManaged;                                     ///< If true, registry manages lifecycle
+
+  ProtocolEntry() 
+    : protocol(nullptr), referenceCount(0), autoManaged(false) {}
+
+  explicit ProtocolEntry(BaseProtocol* proto, bool managed = false)
+    : protocol(proto), referenceCount(1), autoManaged(managed) {}
+};
+
+
+//************************************** ConfigRegistry **************************************//
+
+/**
+ * @class ConfigRegistry
+ * @brief Register and manages configuration parameters for different communication interfaces
+ * (Modbus, CAN, etc.).
+ * @note Singleton pattern to prevent multiple instances.
+ */
+class ConfigRegistry {
+private:
+  std::unordered_map<std::string, ProtocolEntry> registry; ///< Registry: protocolKey -> ProtocolEntry
+
+  Semaphore m_mutex; ///< Mutex for thread safety
+
+  // Private constructor/destructor for singleton
+  ConfigRegistry() : m_mutex(Semaphore::create_mutex()) {};
+  ~ConfigRegistry() {
+    cleanup();
+  }
+
+  // Instance
+  static ConfigRegistry& getInstance();
+
+  // Cleanup managed protocols
+  void cleanup();
+
+public:
+  // ========== CONFIGURATION MANAGEMENT ==========
+
+  /**
+   * @brief Register a protocol key without an instance
+   */
+  static bool registerProtocol(const std::string& protocolKey);
+
+  /**
+   * @brief Register or update a protocol with an instance
+   * @param protocolKey The protocol identifier
+   * @param protocol Pointer to protocol instance
+   * @param autoManaged If true, registry takes ownership and deletes on cleanup
+   * @return true if successful, false if key already exists with a different instance
+   */
+  static bool registerProtocol(const std::string& protocolKey, 
+                               BaseProtocol* protocol, 
+                               bool autoManaged = false);
+
+  // ========== INSTANCE MANAGEMENT ==========
+
+  /**
+   * @brief Get protocol instance (nullptr if not registered)
+   */
+  static std::pair<BaseProtocol*, bool> getProtocol(const std::string& protocolKey);
+
+  /**
+   * @brief Check if a protocol instance is registered
+   */
+  static bool hasProtocol(const std::string& protocolKey);
+
+  /**
+   * @brief Release a reference to a protocol
+   * @return true if protocol was removed (referenceCount == 0)
+   */
+  static bool releaseProtocol(const std::string& protocolKey);
+
+  /**
+   * @brief Remove a protocol entry completely
+   */
+  static bool removeProtocol(const std::string& protocolKey);
+
+  // ========== CONFIGURATION METHODS ==========
+
+  /**
+   * @brief Register/change a configuration parameter
+   */
+  static bool setConfig(const std::string& protocolKey,
+                       const std::string& paramKey,
+                       const std::string& paramValue);
+
+  template<typename T>
+  static bool setConfigAs(const std::string& protocolKey, 
+                       const std::string& paramKey, 
+                       T paramValue) {
+    return setConfig(protocolKey, paramKey, convertFrom<T>(paramValue));
+  }
+
+  static bool setConfig(const std::string& protocolKey,
+                       const std::string& paramKey,
+                       int paramValue) {
+    return setConfigAs<int>(protocolKey, paramKey, paramValue);
+  }
+
+  static bool setConfig(const std::string& protocolKey, 
+                       const std::string& paramKey, 
+                       float paramValue) {
+    return setConfigAs<float>(protocolKey, paramKey, paramValue);
+  }
+
+  static bool setConfig(const std::string& protocolKey, 
+                       const std::string& paramKey, 
+                       bool paramValue) {
+    return setConfigAs<bool>(protocolKey, paramKey, paramValue);
+  }
+                       
+  static std::string getConfig(const std::string& protocolKey, 
+                              const std::string& paramKey, 
+                              const std::string& defaultValue = "");
+
+  template<typename T>
+  static T getConfigAs(const std::string& protocolKey, 
+                      const std::string& paramKey, 
+                      T defaultValue = T()) {
+    std::string value = getConfig(protocolKey, paramKey);
+    if (value.empty()) return defaultValue;
+  
+    // Conversion based on type
+    try {
+      return convertTo<T>(value);
+    } catch (...) {} // Do nothing, just return the default
+    return defaultValue;
+  }
+
+  static bool hasConfig(const std::string& protocolKey, 
+                       const std::string& paramKey = "");
+
+  // ========== UTILITY METHODS ==========
+
+  static std::vector<std::string> listProtocols();
+  static void clear();
+  static void debugPrint();
+};
+
+
+//************************************** BaseProtocol **************************************//
+
+/**
+ * @class BaseProtocol
+ * @brief Base class to build multiple communication interfaces (Modbus, CAN, etc.).
+ */
+class BaseProtocol {
+protected:
+  std::string m_key;          ///< "[DATATYPE]@[Instance]", where DATATYPE = ("CANBUS", "RTU", "TCP", etc...) and [0 <= Instance < <uint8_t>::max()]
+  bool m_configured = false;  ///< Protocol is configured?
+  bool m_started = false;     ///< Protocol is started?
+  Semaphore m_rec_mutex;      ///< Recursive mutex
+  
+  // Key parse methods
+  static std::pair<std::string, uint8_t> parseKey(const std::string& key) {
+    uint8_t no_value = std::numeric_limits<uint8_t>::max();
+    size_t atPos = key.find('@');
+    if (atPos == std::string::npos) {
+      return {key, no_value}; // No instance, instance 0 by default
+    }
+    
+    std::string type = key.substr(0, atPos);
+    std::string instanceStr = key.substr(atPos + 1);
+    
+    try {
+      uint8_t instance = static_cast<uint8_t>(std::stoi(instanceStr));
+      return {type, instance};
+    } catch (...) {
+      return {type, no_value};
+    }
+  }
+  
+  // Protected constructor
+  BaseProtocol(const std::string& key)
+    : m_key(key), m_rec_mutex(Semaphore::create_recursive_mutex()) {
+    
+    // Auto registry with no instance
+    ConfigRegistry::registerProtocol(key);
+  }
+  
+public:
+  virtual ~BaseProtocol() = default;
+  
+  // ========== TYPE AND VERIFICATION METHODS ==========
+  
+  /**
+   * @brief Gets the type of protocol (ej: "twai", "rtu", "tcp")
+   */
+  const std::string getProtocolType() const { return parseKey(m_key).first; }
+  
+  /**
+   * @brief Gets the instance number
+   */
+  uint8_t getInstanceNumber() const { return parseKey(m_key).second; }
+  
+  /**
+   * @brief Verify if this protocol is compatible with given type
+   * @param expectedType Expacted type (ej: "TWAI", "CANBUS", "MODBUS_RTU")
+   */
+  bool isType(const std::string& expectedType) const {
+    return expectedType == getProtocolType();
+  }
+
+  // ========== PUBLIC SATIC METHODS ==========
+  
+  /**
+   * @brief Gets an existing instance with type verification
+   * @param key Protocol key (ej: "twai@0")
+   * @param expectedType Expected type (for verification)
+   * @return Protocol pointer or nullptr does not exits or wrong type
+   */
+  template<typename T>
+  static std::pair<T*, bool> getExistingChecked(const std::string& key, 
+                               const std::string& expectedType = "") {
+    auto existing = getExisting(key);
+    if (!existing.first) return def_value;
+    
+    // Verify type if specified
+    if (!expectedType.empty() && !existing.first->isType(expectedType)) {
+      log_e("Type mismatch for %s. Expected: %s, Got: %s\n",
+                    key.c_str(), expectedType.c_str(), 
+                    existing.first->getProtocolType().c_str());
+      return def_value;
+    }
+    
+    // Safe cast after verification
+    return {static_cast<T*>(existing.first), existing.second};
+  }
+
+  static std::pair<BaseProtocol*, bool> getExisting(const std::string& key) {
+    return ConfigRegistry::getProtocol(key);
+  }
+  
+  static bool registerInstance(const std::string& key, 
+                              BaseProtocol* instance, 
+                              bool autoManaged = false) {
+    return ConfigRegistry::registerProtocol(key, instance, autoManaged);
+  }
+  
+  // ========== FACTORY METHODS SEGUROS ==========
+
+  /**
+   * @brief Creates or get a shared instance with verification
+   */
+  template<typename T>
+  static T* createShared(const std::string& key,
+                         std::function<T *()> new_func,
+                         const std::string& expectedType = "") {
+
+    // Verify if already exist
+    auto existing = BaseProtocol::getExistingChecked<T>(key, expectedType);
+
+    if (existing.first) {
+      // Verify if protocol can be shared
+      if (!existing.second) {
+        log_e("Can't take protocol %s: is not shared", key.c_str());
+        return nullptr;
+      }
+      return existing.first;
+    }
+
+    // Create new instance
+    T* instance = new_func();
+    // Register as auto-managed
+    BaseProtocol::registerInstance(key, instance, true);
+    return instance;
+  }
+
+  /**
+   * @brief Creates unique instance (not shared)
+   */
+  template<typename T>
+  static std::unique_ptr<T> createUnique(const std::string& key,
+                                         std::function<T *()> new_func) {
+    // Verify that does not exist
+    auto existing = getExisting(key);
+
+    if (existing.first) {
+      log_e("Protocol %s already exists\n", key.c_str());
+      return nullptr;
+    }
+  
+    // Create new instance
+    std::unique_ptr<T> instance(new_func());
+    // Register as no auto-managed
+    BaseProtocol::registerInstance(key, instance.get(), false);
+  
+    return instance;
+  }
+  
+  // ========== PUBLIC INTERFACE ==========
+  
+  virtual bool configure() = 0;
+  virtual bool begin() = 0;
+  virtual void end() = 0;
+  
+  bool isReady() const { return m_configured && m_started; }
+  
+  // ====== Access to configuration ======
+
+  template<typename T>
+  T getConfig(const std::string& param, T defaultValue = T()) const {
+    return ConfigRegistry::getConfigAs<T>(m_key, param, defaultValue);
+  }
+  
+  std::string getString(const std::string& param, 
+                       const std::string& def = "") const {
+    return getConfig<std::string>(param, def);
+  }
+  
+  int getInt(const std::string& param, int def = 0) const {
+    return getConfig<int>(param, def);
+  }
+  
+  float getFloat(const std::string& param, float def = 0.0f) const {
+    return getConfig<float>(param, def);
+  }
+
+  float getDouble(const std::string& param, double def = 0.0f) const {
+    return getConfig<double>(param, def);
+  }
+  
+  bool getBool(const std::string& param, bool def = false) const {
+    return getConfig<bool>(param, def);
+  }
+  
+  bool hasParam(const std::string& param) const {
+    return ConfigRegistry::hasConfig(m_key, param);
+  }
+  
+  const std::string& getKey() const { return m_key; }
+  
+  friend class ConfigRegistry;
+};
 
 
 //************************************** Stream Link **************************************//
@@ -41,7 +488,7 @@ public:
 
 private:
   ModbusClientRTU* m_mbcrtu;
-  static xSemaphoreHandle m_mutex;
+  static Semaphore m_mutex;
 
 protected:
   StreamLink();
@@ -93,6 +540,13 @@ class Task {
    */
   void abortTaskDelay () { xTaskAbortDelay(m_taskHandle); }
 
+  /**
+   * @brief Send a notification to this task, bringing it out of the Blocked state.
+   * @details Use it from an external task when you invoked the function
+   * `notifyTakeFromThisTask()` from this task to lock 
+   */
+  void notifyGive() { xTaskNotifyGive(m_taskHandle); }
+
 protected:
 
   /**
@@ -105,6 +559,16 @@ protected:
     taskInstance->Main();
     vTaskDelete(taskInstance->m_taskHandle);
   }
+
+  /**
+   * @brief Static function for take notification from external task.
+   * @param ticksToWait Time to wait before skip from this lock. Default portMAX_DELAY (wait forever)
+   * @details Use this function inside the task implementation. Then, from an external task, call
+   * `notifyGive()` to resume task operation. Unlike suspend()/resume() which suspend task operation
+   * from outside, notifyTakeFromThisTask()/notifyGive() make possible to suspend from inside the
+   * task to resume from outside. This is usefull for tasks synchronization.
+   */
+  static inline void notifyTakeFromThisTask(TickType_t ticksToWait = portMAX_DELAY) { ulTaskNotifyTake( pdTRUE, ticksToWait ); }
 
   TaskHandle_t m_taskHandle;
 };
@@ -149,69 +613,6 @@ private:
   void Main() override { m_taskcb(); }
   
   TaskCallback m_taskcb;
-};
-
-
-//************************************** Scoped Lockguard **************************************//
-
-/**
- * @class LockGuard
- * @brief RAII wrapper for mutex/semaphore management.
- * @tparam SemaphT Type of semaphore (xSemaphoreHandle by default)
- * @details This lock guard will lock with semaphore SemaphT until LockGuard instance goes out of scope
- * @warning Please, avoid use of anonimous declaration for this class (declare "LockGuard<xSemaphoreHandle> lg(m_mutex);"
- * instead of "LockGuard<xSemaphoreHandle> (m_mutex);"), otherwise the scope will dissapear in the same line,
- * and also the mutex locking
- */
-template<typename SemaphT = xSemaphoreHandle>
-class LockGuard {
-public:
-
-  /**
-   * @brief Locks semaphore on creation with optional timeout.
-   * @param s Reference to semaphore
-   * @param timeout Maximum time to wait (portMAX_DELAY by default, which means wait for ever)
-   */
-  LockGuard(SemaphT& s, TickType_t timeout = portMAX_DELAY) : m_s(s) {
-    BaseType_t result = xSemaphoreTake(m_s, timeout);
-    // Barrier after take
-    asm volatile("" : : : "memory"); // Compiler Memory Barrier
-    #if CONFIG_FREERTOS_UNICORE == 0
-      __sync_synchronize(); // Multicore hardware barrier
-    #endif
-    if (result == pdTRUE) {
-    // log_d("Lock acquired %p", &m_s); // Uncomment if suspect of bug caused by lockguard
-    } else {
-      log_e("Failed to acquire lock %p", &m_s);
-    }
-  }
-
-  /**
-   * @brief Unlocks semaphore on destruction.
-   */
-  ~LockGuard() {
-    // log_d("Releasing lock %p", &m_s); // Uncomment if suspect of bug caused by lockguard
-    // Barrier before give
-    #if CONFIG_FREERTOS_UNICORE == 0
-      __sync_synchronize();
-    #endif
-    asm volatile("" : : : "memory");
-    xSemaphoreGive(m_s);
-    // Barrier after give
-    asm volatile("" : : : "memory"); // Compiler Memory Barrier
-    #if CONFIG_FREERTOS_UNICORE == 0
-      __sync_synchronize();
-    #endif
-  }
-
-  // No copy/move operators
-  LockGuard(const LockGuard&) = delete;
-  LockGuard& operator=(const LockGuard&) = delete;
-  LockGuard(LockGuard&&) = delete;
-  LockGuard& operator=(LockGuard&&) = delete;
-
-private:
-  SemaphT& m_s;
 };
 
 
@@ -330,7 +731,7 @@ private:
   LedcChan();
   ~LedcChan() = default;
   uint32_t m_busyChans; // Bitmask for tracking (1 << channel)
-  static xSemaphoreHandle m_mutex;  // Semaphore for thread safety
+  static Semaphore m_mutex;  // Semaphore for thread safety
   // Delete the copy and move constructors
   LedcChan(const LedcChan&) = delete;
   LedcChan& operator=(const LedcChan&) = delete;
@@ -369,7 +770,7 @@ private:
   ~TimeCounter() {}
 
   static uint32_t m_timeInSecs;
-  static xSemaphoreHandle m_mutex;
+  static Semaphore m_mutex;
 };
 
 
@@ -618,7 +1019,7 @@ public:
 
   /**
    * @brief Checks if stored value can be converted to type T.
-   * @tparam T Target type (bool, int, float, std::string)
+   * @tparam T Target type (bool, int, float, string)
    */
   template<typename T>
   bool can_convert();

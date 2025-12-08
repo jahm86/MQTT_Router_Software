@@ -47,7 +47,7 @@ DIError::ErrCode checkAddress(JsonObject node, uint16_t& m_address) {
 //************************************** Modbus manager **************************************//
 
 template<class DataSourceT, class DataNodeT>
-xSemaphoreHandle ModbusManager<DataSourceT, DataNodeT>::m_mutex(xSemaphoreCreateMutex());
+Semaphore ModbusManager<DataSourceT, DataNodeT>::m_mutex(Semaphore::create_mutex());
 
 template<class DataSourceT, class DataNodeT>
 bool ModbusManager<DataSourceT, DataNodeT>::respHandlerIsSet(false);
@@ -63,7 +63,7 @@ ModbusManager<DataSourceT, DataNodeT>::ModbusManager(DataSourceT* dsInstance, Da
     m_dsInstance(dsInstance), m_nodeInstance(nodeInstance) {
   uint32_t token = nodeInstance->token();
   do { // To apply mutex just here
-    LockGuard<xSemaphoreHandle> lg(m_mutex);
+    LockGuard lg(m_mutex);
     sm_map[token] = this;
     busy_map[token] = {false, false};
   } while(false);
@@ -126,7 +126,7 @@ void ModbusManager<DataSourceT, DataNodeT>::onModbusResponse(ModbusMessage msg, 
   bool isRead = opIsRead(funcCode);
   bool isWrite = opIsWrite(funcCode);
   do { // To apply mutex just here
-    LockGuard<xSemaphoreHandle> lg(m_mutex);
+    LockGuard lg(m_mutex);
     typename unordered_map<uint16_t, Busy_t>::const_iterator busy_it = busy_map.find(token);
     assert(busy_it != busy_map.end());
     Busy_t busy_item = busy_it->second;
@@ -159,7 +159,7 @@ Modbus::Error ModbusManager<DataSourceT, DataNodeT>::addRequest(Modbus::Function
   uint8_t id = m_dsInstance->serverId();
   bool isRead = opIsRead(funcCode);
   bool isWrite = opIsWrite(funcCode);
-  LockGuard<xSemaphoreHandle> lg(m_mutex);
+  LockGuard lg(m_mutex);
   Busy_t& busyState = busy_map[token];
   if ((busyState.read >= MAX_NODE_REQUESTS && isRead) || (busyState.write >= MAX_NODE_REQUESTS && isWrite))
     return Error::SERVER_DEVICE_BUSY;

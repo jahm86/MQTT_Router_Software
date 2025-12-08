@@ -12,9 +12,294 @@
 #endif // USE_ARDUINO_JSON
 
 
+//************************************** Scoped Lockguard **************************************//
+
+Semaphore::Semaphore(SemaphoreType type, UBaseType_t max_count, UBaseType_t initial_count) : m_type(type), m_handle(nullptr) {
+  switch (type) {
+  case SemaphoreType::COUNTING_SEMAPHORE:
+    m_handle = xSemaphoreCreateCounting(max_count, initial_count);
+    log_d("Counting Semaphore started at address %p", m_handle);
+    break;
+  case SemaphoreType::MUTEX:
+    m_handle = xSemaphoreCreateMutex();
+    log_d("Mutex started at address %p", m_handle);
+    break;
+  case SemaphoreType::RECURSIVE_MUTEX:
+    m_handle = xSemaphoreCreateRecursiveMutex();
+    log_d("Recursive Mutex started at address %p", m_handle);
+    break;
+  case SemaphoreType::BINARY_SEMAPHORE:
+    m_handle = xSemaphoreCreateBinary();
+    log_d("Binary Semaphore started at address %p", m_handle);
+    break;
+  // More types, if needed...
+  }
+
+  assert(m_handle != nullptr);
+}
+
+Semaphore::~Semaphore() {
+  if (m_handle) {
+    vSemaphoreDelete(m_handle);
+  }
+}
+
+Semaphore::Semaphore(Semaphore&& other) noexcept : m_handle(other.m_handle), m_type(other.m_type) {
+  other.m_handle = nullptr;
+}
+
+Semaphore &Semaphore::operator=(Semaphore &&other) noexcept {
+  if (this != &other) {
+    m_type = other.m_type;
+    if (m_handle)
+      vSemaphoreDelete(m_handle);
+    m_handle = other.m_handle;
+    other.m_handle = nullptr;
+  }
+  return *this;
+}
+
+LockGuard::LockGuard(Semaphore& semaphore, TickType_t timeout) : m_s(semaphore) {
+  BaseType_t result;
+  switch (m_s.m_type) {
+  case Semaphore::SemaphoreType::RECURSIVE_MUTEX:
+    result = xSemaphoreTakeRecursive(m_s.m_handle, timeout);
+    break;
+  case Semaphore::SemaphoreType::MUTEX:
+  case Semaphore::SemaphoreType::BINARY_SEMAPHORE:
+  case Semaphore::SemaphoreType::COUNTING_SEMAPHORE:
+    result = xSemaphoreTake(m_s.m_handle, timeout);
+    break;
+  // More types, if needed...
+  }
+  // Barrier after take
+  asm volatile("" : : : "memory"); // Compiler Memory Barrier
+  #if CONFIG_FREERTOS_UNICORE == 0
+    __sync_synchronize(); // Multicore hardware barrier
+  #endif
+  if (result == pdTRUE) {
+  //log_d("Lock acquired %p", &m_s); // Uncomment only if suspect of bug caused by lockguard, because is too verbose
+  } else {
+    log_e("Failed to acquire lock %p", &m_s);
+  }
+}
+
+LockGuard::~LockGuard() {
+  //log_d("Releasing lock %p", &m_s); // Uncomment only if suspect of bug caused by lockguard, because is too verbose
+  // Barrier before give
+  #if CONFIG_FREERTOS_UNICORE == 0
+    __sync_synchronize();
+  #endif
+  asm volatile("" : : : "memory");
+  switch (m_s.m_type) {
+  case Semaphore::SemaphoreType::RECURSIVE_MUTEX:
+    xSemaphoreGiveRecursive(m_s.m_handle);
+    break;
+  case Semaphore::SemaphoreType::MUTEX:
+  case Semaphore::SemaphoreType::BINARY_SEMAPHORE:
+  case Semaphore::SemaphoreType::COUNTING_SEMAPHORE:
+    xSemaphoreGive(m_s.m_handle);
+    break;
+  // More types, if needed...
+  }
+  // Barrier after give
+  asm volatile("" : : : "memory"); // Compiler Memory Barrier
+  #if CONFIG_FREERTOS_UNICORE == 0
+    __sync_synchronize();
+  #endif
+}
+
+
+//************************************** Conversion templates **************************************//
+
+template<>
+const std::string convertFrom<int>(int value) { return std::to_string(value); }
+
+template<>
+int convertTo<int>(const std::string& value) { return std::stoi(value); };
+
+template<>
+const std::string convertFrom<long>(long value) { return std::to_string(value); }
+
+template<>
+long convertTo<long>(const std::string& value) { return std::stol(value); };
+
+template<>
+const std::string convertFrom<float>(float value) { return std::string(value, 6); }
+
+template<>
+float convertTo<float>(const std::string& value) { return std::stof(value); };
+
+template<>
+const std::string convertFrom<double>(double value) { return std::to_string(value); }
+
+template<>
+double convertTo<double>(const std::string& value) { return std::stod(value); };
+
+template<>
+const std::string convertFrom<bool>(bool value) { return (value ? "true" : "false"); }
+
+template<>
+bool convertTo<bool>(const std::string& value) { return (value == "true" || value == "1" || value == "TRUE"); };
+
+template<>
+const std::string convertFrom<const std::string&>(const std::string& value) { return value; }
+
+template<>
+const std::string& convertTo<const std::string&>(const std::string& value) { return value; };
+
+template<>
+std::string convertTo<std::string>(const std::string& value) { return value; };
+
+
+//************************************** ConfigRegistry **************************************//
+
+ConfigRegistry& ConfigRegistry::getInstance() {
+  static ConfigRegistry instance;
+  return instance;
+}
+
+void ConfigRegistry::cleanup() {
+  LockGuard lg(m_mutex);
+  
+  for (auto& pair : registry) {
+    if (pair.second.autoManaged && pair.second.protocol) {
+      delete pair.second.protocol;
+      pair.second.protocol = nullptr;
+    }
+  }
+  registry.clear();
+}
+
+bool ConfigRegistry::registerProtocol(const std::string& protocolKey) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+
+  auto it = instance.registry.find(protocolKey);
+  if (it == instance.registry.end()) {
+    instance.registry[protocolKey] = ProtocolEntry();
+    return true;
+  }
+  return false; // Already exists
+}
+
+bool ConfigRegistry::registerProtocol(const std::string& protocolKey, 
+                                     BaseProtocol* protocol, 
+                                     bool autoManaged) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+
+  auto it = instance.registry.find(protocolKey);
+  if (it == instance.registry.end()) {
+    // Create new entry
+    instance.registry[protocolKey] = ProtocolEntry(protocol, autoManaged);
+    return true;
+  } else if (it->second.protocol == nullptr) {
+    // Update existing entry without instance
+    it->second.protocol = protocol;
+    it->second.autoManaged = autoManaged;
+    it->second.referenceCount = 1;
+    return true;
+  } else if (it->second.protocol == protocol) {
+    // Same instance, increment reference count
+    it->second.referenceCount++;
+    return true;
+  }
+  // Different instance already registered
+  return false;
+}
+
+std::pair<BaseProtocol*, bool> ConfigRegistry::getProtocol(const std::string& protocolKey) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+
+  auto it = instance.registry.find(protocolKey);
+  if (it != instance.registry.end()) {
+    return {it->second.protocol, it->second.autoManaged};
+  }
+  return def_value;
+}
+
+bool ConfigRegistry::hasProtocol(const std::string& protocolKey) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+
+  auto it = instance.registry.find(protocolKey);
+  return it != instance.registry.end() && it->second.protocol != nullptr;
+}
+
+bool ConfigRegistry::releaseProtocol(const std::string& protocolKey) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+  
+  auto it = instance.registry.find(protocolKey);
+  if (it == instance.registry.end()) return false;
+  
+  if (it->second.protocol && it->second.referenceCount > 0) {
+    it->second.referenceCount--;
+    
+    if (it->second.referenceCount == 0 && it->second.autoManaged) {
+      // Last reference and auto-managed, delete instance
+      delete it->second.protocol;
+      it->second.protocol = nullptr;
+      it->second.autoManaged = false;
+      return true; // Instance removed
+    }
+  }
+  return false; // Instance still exists
+}
+
+bool ConfigRegistry::removeProtocol(const std::string& protocolKey) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+  
+  auto it = instance.registry.find(protocolKey);
+  if (it == instance.registry.end()) return false;
+  
+  // Cleanup if auto-managed
+  if (it->second.autoManaged && it->second.protocol) {
+    delete it->second.protocol;
+  }
+  
+  instance.registry.erase(it);
+  return true;
+}
+
+// Configuration methods (similar to your existing implementation)
+bool ConfigRegistry::setConfig(const std::string& protocolKey, 
+                              const std::string& paramKey, 
+                              const std::string& paramValue) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+  
+  auto it = instance.registry.find(protocolKey);
+  if (it != instance.registry.end()) {
+    it->second.config[paramKey] = paramValue;
+    return true;
+  }
+  return false;
+}
+
+std::string ConfigRegistry::getConfig(const std::string& protocolKey, 
+                                     const std::string& paramKey, 
+                                     const std::string& defaultValue) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+  
+  auto it = instance.registry.find(protocolKey);
+  if (it != instance.registry.end()) {
+    auto paramIt = it->second.config.find(paramKey);
+    if (paramIt != it->second.config.end()) {
+      return paramIt->second;
+    }
+  }
+  return defaultValue;
+}
+
+
 //************************************** Stream Link **************************************//
 
-xSemaphoreHandle StreamLink::m_mutex(xSemaphoreCreateMutex());
+Semaphore StreamLink::m_mutex(Semaphore::create_mutex());
 
 StreamLink::StreamLink() : m_mbcrtu(nullptr) {}
 
@@ -24,7 +309,7 @@ StreamLink& StreamLink::Instance() {
 }
 
 void StreamLink::SetNew(ModbusClientRTU* modbusClient) {
-  LockGuard<xSemaphoreHandle> lg(m_mutex);
+  LockGuard lg(m_mutex);
   if (m_mbcrtu == nullptr) {
     log_d("Saving modbusClient");
     m_mbcrtu = modbusClient;
@@ -84,7 +369,7 @@ void Toadllocator::check(const char * srcFileName, int srcLineNumber) {
 
 //************************************** Helper for PWM channel in ESP32 **************************************//
 
-xSemaphoreHandle LedcChan::m_mutex(xSemaphoreCreateMutex());
+Semaphore LedcChan::m_mutex(Semaphore::create_mutex());
 
 LedcChan& LedcChan::Instance() {
   static LedcChan instance;
@@ -95,7 +380,7 @@ LedcChan::LedcChan() : m_busyChans(0x0) {}
 
 int LedcChan::addChannel() {
   int channel;
-  LockGuard<xSemaphoreHandle> lg(m_mutex);  // Thread-safe access
+  LockGuard lg(m_mutex);  // Thread-safe access
   uint32_t busyChans = m_busyChans;
   for (channel = 0; channel < LEDC_MAX_CHANS; ++channel) {
     if (!(busyChans & 0x1))
@@ -115,7 +400,7 @@ void LedcChan::removeChannel(int channel) {
   if (channel < 0 || channel >= LEDC_MAX_CHANS) {
     log_w("Channel outside range: %d", channel);
   } else {
-    LockGuard<xSemaphoreHandle> lg(m_mutex);        // Thread-safe access
+    LockGuard lg(m_mutex);        // Thread-safe access
     m_busyChans &= ~(((uint32_t) 0x1) << channel);  // Release the bit
   }
 }
@@ -136,7 +421,7 @@ uint8_t DigitalCalc::receive(bool value) {
 
 //************************************** Class to get Time in Seconds **************************************//
 
-xSemaphoreHandle TimeCounter::m_mutex(xSemaphoreCreateMutex());
+Semaphore TimeCounter::m_mutex(Semaphore::create_mutex());
 
 uint32_t TimeCounter::m_timeInSecs(0);
 
@@ -154,7 +439,7 @@ void TimeCounter::TickTask (void*) {
   while (true) {
     xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
     do { // To apply mutex just here
-      LockGuard<xSemaphoreHandle> lg(m_mutex);
+      LockGuard lg(m_mutex);
       m_timeInSecs++;
     } while(false);
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
@@ -180,7 +465,7 @@ TimeCounter::TimeCounter() {
 }
 
 uint32_t TimeCounter::getTimeSecs() {
-  LockGuard<xSemaphoreHandle> lg(m_mutex);
+  LockGuard lg(m_mutex);
   return m_timeInSecs;
 }
 

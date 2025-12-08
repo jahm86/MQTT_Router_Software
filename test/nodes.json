@@ -28,7 +28,7 @@
     "name": "Sensors",
     "type": "can",
     "nodes": [
-      {"name": "spd", "type": "int", "filter": 1234, "extf": false}
+      {"name": "spd", "type": "uint16", "id": 1234, "gain": 10, "unit": "Km/h"}
     ]
   }
 ]
