@@ -60,8 +60,13 @@ DataFactory<DataNode>::DataFactory() {
   // Modbus objects
   Register("HREG", MbHReg::Create);
   // Canbus objects
-  Register("uint8", CAN_UINT8::Create);
-  Register("uint16", CAN_UINT16::Create);
+  Register("uint8", CAN_uint8::Create);
+  Register("uint16", CAN_uint16::Create);
+  Register("uint32", CAN_uint32::Create);
+  Register("int8", CAN_int8::Create);
+  Register("int16", CAN_int16::Create);
+  Register("int32", CAN_int32::Create);
+  Register("float", CAN_float::Create);
 }
 
 

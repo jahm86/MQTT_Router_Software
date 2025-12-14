@@ -200,7 +200,7 @@ int MbHReg::build(JsonObject node, int index) {
   // Add linear calculator
   float offset = node["off"];
   float gain = node["gain"] | 1.0;
-  m_calc = new LinearCalc(offset, gain, UINT16_MAX);
+  m_calc = new LinearCalc<>(offset, gain, UINT16_MAX);
   // add send manager
   uint32_t mintime = node["mintime"] | 1;
   uint32_t maxtime = node["maxtime"] | 60;

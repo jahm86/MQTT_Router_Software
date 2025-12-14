@@ -12,6 +12,33 @@
 #endif // USE_ARDUINO_JSON
 
 
+//************************************** Conversion templates **************************************//
+
+template<>
+int convertTo<int>(const std::string& value) { return std::stoi(value); };
+
+template<>
+long convertTo<long>(const std::string& value) { return std::stol(value); };
+
+template<>
+uint32_t convertTo<uint32_t>(const std::string& value) { return std::stoul(value); };
+
+template<>
+float convertTo<float>(const std::string& value) { return std::stof(value); };
+
+template<>
+double convertTo<double>(const std::string& value) { return std::stod(value); };
+
+template<>
+bool convertTo<bool>(const std::string& value) { return (value == "true" || value == "1" || value == "TRUE"); };
+
+template<>
+const std::string& convertTo<const std::string&>(const std::string& value) { return value; };
+
+template<>
+std::string convertTo<std::string>(const std::string& value) { return value; };
+
+
 //************************************** Scoped Lockguard **************************************//
 
 Semaphore::Semaphore(SemaphoreType type, UBaseType_t max_count, UBaseType_t initial_count) : m_type(type), m_handle(nullptr) {
@@ -108,48 +135,6 @@ LockGuard::~LockGuard() {
     __sync_synchronize();
   #endif
 }
-
-
-//************************************** Conversion templates **************************************//
-
-template<>
-const std::string convertFrom<int>(int value) { return std::to_string(value); }
-
-template<>
-int convertTo<int>(const std::string& value) { return std::stoi(value); };
-
-template<>
-const std::string convertFrom<long>(long value) { return std::to_string(value); }
-
-template<>
-long convertTo<long>(const std::string& value) { return std::stol(value); };
-
-template<>
-const std::string convertFrom<float>(float value) { return std::string(value, 6); }
-
-template<>
-float convertTo<float>(const std::string& value) { return std::stof(value); };
-
-template<>
-const std::string convertFrom<double>(double value) { return std::to_string(value); }
-
-template<>
-double convertTo<double>(const std::string& value) { return std::stod(value); };
-
-template<>
-const std::string convertFrom<bool>(bool value) { return (value ? "true" : "false"); }
-
-template<>
-bool convertTo<bool>(const std::string& value) { return (value == "true" || value == "1" || value == "TRUE"); };
-
-template<>
-const std::string convertFrom<const std::string&>(const std::string& value) { return value; }
-
-template<>
-const std::string& convertTo<const std::string&>(const std::string& value) { return value; };
-
-template<>
-std::string convertTo<std::string>(const std::string& value) { return value; };
 
 
 //************************************** ConfigRegistry **************************************//

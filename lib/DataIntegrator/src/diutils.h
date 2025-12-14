@@ -19,11 +19,55 @@
 #define LEDC_MAX_CHANS 16
 
 
+//************************************** Conversions **************************************//
+
+template<typename T>
+T convertTo(const std::string& value);
+
+// Primary definition
+template<typename T>
+inline const std::string convertFrom(T value) { 
+    // Using static_assert for better error management
+    static_assert(std::is_arithmetic<T>::value, 
+                  "convertFrom requires arithmetic type or specialization");
+    return std::to_string(value); 
+}
+
+// Specialization declarations
+template<>
+inline const std::string convertFrom<float>(float value) {
+    return std::string(value, 6);
+}
+
+template<>
+inline const std::string convertFrom<bool>(bool value) {
+    return value ? "true" : "false";
+}
+
+template<>
+inline const std::string convertFrom<std::string>(std::string value) {
+    return value;
+}
+
+/**
+ * @brief Converts time in milliseconds to time in ticks
+ * @param time_ms Time in milliseconds
+ * @return time in FreeRTOS ticks (TickType_t)
+ */
+inline const TickType_t millis2ticks(int time_ms) { return pdMS_TO_TICKS(time_ms); }
+
+
 //************************************** Scoped Lockguard **************************************//
 
 // Forward declaration
 class LockGuard;
 
+/**
+ * @class Semaphore
+ * @brief RAII wrapper for semaphore creation.
+ * @details This Semaphore will be used with LockGuard class to lock from multiple access to resources.
+ * It has different types of static initialization methods for different semaphore types.
+ */
 class Semaphore {
 private:
   enum class SemaphoreType {
@@ -65,7 +109,7 @@ public:
 /**
  * @class LockGuard
  * @brief RAII wrapper for mutex/semaphore management.
- * @details This lock guard will lock with semaphore SemaphT until LockGuard instance goes out of scope
+ * @details This lock guard will lock with Semaphore class until LockGuard instance goes out of scope
  * @warning Please, avoid use of anonimous declaration for this class (declare "LockGuard lg(m_mutex);"
  * instead of "LockGuard (m_mutex);"), otherwise the scope will dissapear in the same line,
  * and also the locking
@@ -79,9 +123,9 @@ public:
   /**
    * @brief Locks semaphore on creation with optional timeout.
    * @param semaphore Reference to semaphore
-   * @param timeout Maximum time to wait (portMAX_DELAY by default, which means wait for ever)
+   * @param ticksTimeout Maximum time to wait in ticks (portMAX_DELAY by default, which means wait for ever)
    */
-  LockGuard(Semaphore& semaphore, TickType_t timeout = portMAX_DELAY);
+  LockGuard(Semaphore& semaphore, TickType_t ticksTimeout = portMAX_DELAY);
 
   /**
    * @brief Unlocks semaphore on destruction.
@@ -89,7 +133,7 @@ public:
   ~LockGuard();
 
   // Avoids temporaries
-  LockGuard(Semaphore&& semaphore, TickType_t timeout = portMAX_DELAY) = delete;
+  LockGuard(Semaphore&& semaphore, TickType_t ticksTimeout = portMAX_DELAY) = delete;
   // No copy/move operators
   LockGuard(const LockGuard&) = delete;
   LockGuard& operator=(const LockGuard&) = delete;
@@ -98,23 +142,13 @@ public:
 };
 
 
-//************************************** Conversion templates **************************************//
-
-template<typename T>
-T convertTo(const std::string& value);
-
-template<typename T>
-const std::string convertFrom(T value);
-
+//************************************** ProtocolEntry **************************************//
 
 // Forward declaration
 class BaseProtocol;
 
 // Default value for pair, meaning not existing
 #define def_value {nullptr, false}
-
-
-//************************************** ProtocolEntry **************************************//
 
 /**
  * @struct ProtocolEntry
@@ -224,6 +258,12 @@ public:
     return setConfigAs<int>(protocolKey, paramKey, paramValue);
   }
 
+  static bool setConfig(const std::string& protocolKey,
+                       const std::string& paramKey,
+                       uint32_t paramValue) {
+    return setConfigAs<uint32_t>(protocolKey, paramKey, paramValue);
+  }
+
   static bool setConfig(const std::string& protocolKey, 
                        const std::string& paramKey, 
                        float paramValue) {
@@ -276,7 +316,7 @@ protected:
   std::string m_key;          ///< "[DATATYPE]@[Instance]", where DATATYPE = ("CANBUS", "RTU", "TCP", etc...) and [0 <= Instance < <uint8_t>::max()]
   bool m_configured = false;  ///< Protocol is configured?
   bool m_started = false;     ///< Protocol is started?
-  Semaphore m_rec_mutex;      ///< Recursive mutex
+  Semaphore m_rec_mutex;      ///< Recursive mutex (started on BaseProtocol instantiation)
   
   // Key parse methods
   static std::pair<std::string, uint8_t> parseKey(const std::string& key) {
@@ -364,14 +404,14 @@ public:
     return ConfigRegistry::registerProtocol(key, instance, autoManaged);
   }
   
-  // ========== FACTORY METHODS SEGUROS ==========
+  // ========== SAFE FACTORY METHODS ==========
 
   /**
    * @brief Creates or get a shared instance with verification
    */
   template<typename T>
   static T* createShared(const std::string& key,
-                         std::function<T *()> new_func,
+                         std::function<T *(const std::string&)> new_inst_func,
                          const std::string& expectedType = "") {
 
     // Verify if already exist
@@ -387,7 +427,7 @@ public:
     }
 
     // Create new instance
-    T* instance = new_func();
+    T* instance = new_inst_func(key);
     // Register as auto-managed
     BaseProtocol::registerInstance(key, instance, true);
     return instance;
@@ -398,7 +438,7 @@ public:
    */
   template<typename T>
   static std::unique_ptr<T> createUnique(const std::string& key,
-                                         std::function<T *()> new_func) {
+                                         std::function<T *(const std::string&)> new_inst_func) {
     // Verify that does not exist
     auto existing = getExisting(key);
 
@@ -408,7 +448,7 @@ public:
     }
   
     // Create new instance
-    std::unique_ptr<T> instance(new_func());
+    std::unique_ptr<T> instance(new_inst_func(key));
     // Register as no auto-managed
     BaseProtocol::registerInstance(key, instance.get(), false);
   
@@ -422,6 +462,12 @@ public:
   virtual void end() = 0;
   
   bool isReady() const { return m_configured && m_started; }
+
+  bool isStarted() const { return m_started; }
+
+  bool isConfigured() const { return m_configured; }
+
+  bool release() { return ConfigRegistry::releaseProtocol(m_key); }
   
   // ====== Access to configuration ======
 
@@ -438,7 +484,15 @@ public:
   int getInt(const std::string& param, int def = 0) const {
     return getConfig<int>(param, def);
   }
-  
+
+  uint32_t getU32(const std::string& param, uint32_t def = 0) const {
+    return getConfig<uint32_t>(param, def);
+  }
+
+  long getLong(const std::string& param, long def = 0) const {
+    return getConfig<long>(param, def);
+  }
+
   float getFloat(const std::string& param, float def = 0.0f) const {
     return getConfig<float>(param, def);
   }
@@ -516,6 +570,8 @@ class Task {
   Task(const char * const name, const uint32_t stackDepth, UBaseType_t priority) {
     xTaskCreate(task, name, stackDepth, this, priority, &m_taskHandle);
   }
+
+  ~Task() { vTaskDelete(m_taskHandle); }
   
   /**
    * @brief Pure virtual method with task's main logic.
@@ -876,11 +932,13 @@ protected:
 /**
  * @class AnalogCalc
  * @brief Base class for analog value transformations. Converts between raw hardware values (e.g., ADC readings) and engineering units.
+ * @tparam T Must be of arithmetic type (uint16_t by default, for compatibility)
  * @details Designed for both linear and non-linear systems:
  * - Linear: @ref LinearCalc (y = gain * x + offset)
  * - Non-linear: Custom implementations (e.g., thermocouples, Hall sensors)
  * @note Subclasses must implement send() and receive() methods.
  */
+template<typename T = uint16_t>
 class AnalogCalc {
 public:
 
@@ -889,37 +947,52 @@ public:
    * @param value Raw input (e.g., 12-bit ADC reading).
    * @return Converted value (e.g., 25.4°C).
    */
-  virtual float send(int value) = 0;
+  virtual float send(T value) = 0;
 
   /**
    * @brief Transforms physical unit from outside to raw value.
    * @param value Engineering value (e.g., 100.5 RPM).
    * @return Raw output for hardware (e.g., Modbus register value).
    */
-  virtual int receive(float value) = 0;
+  virtual T receive(float value) = 0;
+
+  virtual ~AnalogCalc() = default;
 
 protected:
 
   /**
    * @brief Constructor for analog calculators with value limiting.
    * @param max Maximum allowed raw value (e.g., 4095 for 12-bit ADC).
-   * @param min Minimum allowed raw value (usually 0).
+   * @param min Minimum allowed raw value (usually 0 for default type, negative minimum for signed type).
    * @note For subclass use only.
    */
-  AnalogCalc(int max, int min) : m_min(min), m_max(max) {}
+  AnalogCalc(T max, T min) : m_min(min), m_max(max) {
+    static_assert(std::is_arithmetic<T>::value, 
+                  "AnalogCalc requires arithmetic type");
+  }
 
   /**
    * @brief Clamps raw values to [m_min, m_max] range.
    * @param value Raw input from hardware.
-   * @return Value constrained between min and max.
+   * @return Value constrained and rounded between min and max.
    */
-  inline int limiter(int value) {
-    return value > m_max ? m_max : value < m_min ? m_min : value;
+  inline T limiter(float value) {
+    if (!std::isfinite(value)) { // Abnormal cases
+      log_w("Non finite value received: %f", value);
+      if (std::isnan(value))
+        return m_min; // Security value for NaN
+      return std::signbit(value) ? m_min : m_max; // value is -Inf or +Inf
+    }
+    if (value > static_cast<float>(m_max)) // Very +
+      return m_max;
+    if (value < static_cast<float>(m_min)) // Very -
+      return m_min;
+    return static_cast<T>(std::round(value)); // Normal values
   }
 
 private:
-  int m_min;
-  int m_max;
+  T m_min;
+  T m_max;
 };
 
 
@@ -927,9 +1000,11 @@ private:
 
 /**
  * @class LinearCalc
+ * @tparam T Must be of arithmetic type (uint16_t by default, for compatibility)
  * @brief Applies linear transformation: y = gain * x + offset
  */
-class LinearCalc : public AnalogCalc {
+template<typename T = uint16_t>
+class LinearCalc : public AnalogCalc<T> {
 public:
 
   /**
@@ -937,20 +1012,33 @@ public:
    * @param offset Zero adjustment (e.g., sensor calibration).
    * @param gain Scaling factor (e.g., 0.1 for 10:1 scaling).
    * @param max Maximum raw value (default: max of data type).
-   * @param min Minimum raw value (default: 0).
+   * @param min Minimum raw value (default: min of data type).
    * @example 
    * LinearCalc(2.5, 0.02)       // y = 0.02x + 2.5
    * LinearCalc(-40, 0.1, 1023)  // For 10-bit sensor (-40°C at 0)
    */
-  LinearCalc(float offset, float gain, int max = INT_MAX, int min = 0) :
-  m_offset(offset), m_gain(gain), AnalogCalc(max, min) {}
+  LinearCalc(float offset, float gain, T max = std::numeric_limits<T>::max(), T min = std::numeric_limits<T>::lowest()) :
+  m_offset(offset), m_gain(gain), AnalogCalc<T>(max, min) {}
 
-  virtual float send(int value) {
-    return (value - m_offset) / m_gain;
+  virtual float send(T value) {
+    const float epsilon = std::numeric_limits<float>::epsilon();
+    float op_sub = static_cast<float>(value) - m_offset;
+
+    // If gain almost 0, whe're in division by (almost) 0
+    if (std::abs(m_gain) < epsilon) {
+      // Special case based on type of op_sub
+      if (std::abs(op_sub) < epsilon)
+        return std::numeric_limits<float>::quiet_NaN(); // 0/0 -> NaN
+      if (op_sub > 0)
+        return std::numeric_limits<float>::infinity(); // +op_sub/0 -> +Inf
+      return -std::numeric_limits<float>::infinity();  // -op_sub/0 -> -Inf
+    }
+
+    return op_sub / m_gain; // Else, returns conversion result
   }
 
-  virtual int receive(float value) {
-    return limiter((value * m_gain) + m_offset);
+  virtual T receive(float value) {
+    return this->limiter((value * m_gain) + m_offset);
   }
 
 private:

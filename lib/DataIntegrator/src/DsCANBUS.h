@@ -6,6 +6,9 @@
 #include "diutils.h"
 #include <driver/twai.h>
 
+// Forward declaration
+class CANSignalNodeBase;
+class TwaiProtocol;
 
 /**
  * @class DsCANBUS
@@ -13,44 +16,18 @@
  */
 class DsCANBUS : public DataSource {
 public:
-    ~DsCANBUS() override = default;
+    ~DsCANBUS();
     
     int build(JsonObject source, int index) override;
     const char* type() override { return "CANBUS"; }
     static DataSource* Create() { return new DsCANBUS(); }
-    bool run() {return m_twai->begin(); }
-
-private:
-    BaseProtocol *m_twai;
-    twai_filter_config_t m_filter;
-    twai_mode_t m_mode;
-};
-
-
-// Forward declaration
-class CANSignalNodeBase;
-
-/**
- * @class CANBUSTaskQueue
- * @brief handles CANBUS interrupts to receiving CANBUS nodes
- */
-class CANBUSTaskQueue
-{
-public:
-    CANBUSTaskQueue(CANBUSTaskQueue& other) = delete;
-    void operator=(const CANBUSTaskQueue&) = delete;
-    // Get this CANBUSTaskQueue instance
-    static CANBUSTaskQueue& Instance();
-
+    bool runProtocol();
     bool addId(uint32_t id, CANSignalNodeBase *node);
-private:
-    Semaphore m_mutex;
-    extTask* m_task;
-    unordered_map<uint32_t, CANSignalNodeBase*> m_id_map;
-    bool m_started = false;
+    esp_err_t sendMessage(uint32_t id, const uint8_t* data, uint8_t length, int timeout_ms);
+    TwaiProtocol *protocol();
 
-    CANBUSTaskQueue();
-    ~CANBUSTaskQueue() = default;
+private:
+    TwaiProtocol *m_twai;
 };
 
 
@@ -61,11 +38,6 @@ private:
  */
 class CANSignalNodeBase : public DataNode {
 public:
-    struct typePrms {
-        uint8_t length;
-        int max;
-        int min;
-    };
 
     CANSignalNodeBase();
     virtual ~CANSignalNodeBase();
@@ -78,9 +50,10 @@ public:
     void processCanMessage(const twai_message_t &message);
 
 protected:
-    virtual typePrms typeParams() = 0;
-    virtual void packData(uint8_t *payload, int irawValue) = 0;
-    virtual int unpackData(const uint8_t *payload) = 0;
+    virtual size_t typeLen() = 0;
+    virtual void packData(uint8_t *payload, float value) = 0;
+    virtual float unpackData(const uint8_t *payload) = 0;
+    virtual void buildCalc(float offset, float gain) = 0;
     bool m_littleEndian;
 
 private:
@@ -88,9 +61,8 @@ private:
     bool m_extendedId;
     uint32_t m_mask;
     bool m_isTx; // true transmission, false for reception
-    uint32_t m_timeout;
+    int m_timeout;
     uint8_t m_offset;
-    AnalogCalc* m_calc;
     float m_last_value;
     
     AnSendManager* m_sendManager;
@@ -112,68 +84,64 @@ void swapEndianess(void *varp, size_t sz);
 /**
  * @class CANSignalNode
  * @brief DataNode para señales CAN (TX/RX)
- * Esta lleva funciones plantilla para cada tipo
+ * This leads template functions for every type
  */
 template <typename Type>
 class CANSignalNode : public CANSignalNodeBase {
 public:
 
-    typePrms typeParamsAsType() {
-        return {
-            sizeof(Type),
-            std::numeric_limits<Type>::max(),
-            std::numeric_limits<Type>::min()
-        };
-    }
+    CANSignalNode() : CANSignalNodeBase(), m_calc(nullptr) {}
 
-    void packAsType(uint8_t *payload, int irawValue) {
-        Type packed = static_cast<Type>(irawValue);
+    ~CANSignalNode() { delete m_calc; }
+
+    size_t typeLen() override { return sizeof(Type); }
+    
+    void buildCalc(float offset, float gain) override { m_calc = new LinearCalc<Type>(offset, gain); }
+
+    void packData(uint8_t *payload, float value) override {
+        // Apply linear transformation
+        Type packed = m_calc->receive(value);
         if (!m_littleEndian) {
             swapEndianess(&packed, sizeof(Type));
         }
         memcpy(payload, &packed, sizeof(Type));
     }
 
-    int unpackAsType(const uint8_t *payload) {
+    float unpackData(const uint8_t *payload) override {
         Type unpacked;
         memcpy(&unpacked, payload, sizeof(Type));
         if (!m_littleEndian) {
             swapEndianess(&unpacked, sizeof(Type));
         }
-        return static_cast<int>(unpacked);
+
+        // Apply linear transformation
+        float retval = m_calc->send(unpacked);
+        return retval;
     }
-};
-
-class CAN_UINT8 : public CANSignalNode<uint8_t> {
-public:
-    const char* type() override { return "c_uint8"; }
-    static DataNode* Create() { return new CAN_UINT8(); }
+    
 private:
-    typePrms typeParams() override { return typeParamsAsType(); }
-    void packData(uint8_t *payload, int irawValue) override { packAsType(payload, irawValue); }
-    int unpackData(const uint8_t *payload) override { return unpackAsType(payload); }
+    LinearCalc<Type> *m_calc;
 };
 
+// Macro for easy management of CANSignalNode subclasses
+#define CANSigNode(typeId) class CAN_##typeId : public CANSignalNode<typeId##_t> { \
+public: \
+    const char* type() override { return "c_"#typeId; } \
+    static DataNode* Create() { return new CAN_##typeId(); } \
+}
 
-class CAN_UINT16 : public CANSignalNode<uint16_t> {
-public:
-    const char* type() override { return "c_uint16"; }
-    static DataNode* Create() { return new CAN_UINT16(); }
-private:
-    typePrms typeParams() override { return typeParamsAsType(); }
-    void packData(uint8_t *payload, int irawValue) override { packAsType(payload, irawValue); }
-    int unpackData(const uint8_t *payload) override { return unpackAsType(payload); }
-};
+CANSigNode(uint8);
 
-// TODO: fix float case
-class CAN_FLOAT : public CANSignalNode<float> {
-public:
-    const char* type() override { return "c_float"; }
-    static DataNode* Create() { return new CAN_FLOAT(); }
-private:
-    typePrms typeParams() override { return { sizeof(int), std::numeric_limits<int>::max(), std::numeric_limits<int>::min() }; }
-    void packData(uint8_t *payload, int irawValue) override { packAsType(payload, irawValue); }
-    int unpackData(const uint8_t *payload) override { return unpackAsType(payload); }
-};
+CANSigNode(uint16);
+
+CANSigNode(uint32);
+
+CANSigNode(int8);
+
+CANSigNode(int16);
+
+CANSigNode(int32);
+
+CANSigNode(float);
 
 #endif // DS_CANBUS_H

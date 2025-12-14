@@ -6,107 +6,213 @@
 
 //************************************** TwaiProtocol **************************************//
 
+/**
+ * @class TwaiProtocol
+ * @brief Handles TWAI protocol and interrupts for CANBUS nodes
+ */
 class TwaiProtocol : public BaseProtocol {
 private:
-  // Miembros específicos de TWAI
-  void* twaiHandler = nullptr;
 
-  // Constructor privado para forzar uso de factory
-  TwaiProtocol(const std::string& key) : BaseProtocol(key) {};
-  
-  // Constructor privado para forzar uso de factory
-  /*TwaiProtocol(const std::string& key) : BaseProtocol(key) {
-    // Registro automático en el registry
-    BaseProtocol::registerInstance(key, this, true);
-  }*/
+  // ========== TWAI SPECIFIC MEMBERS ==========
+
+  unordered_map<uint32_t, CANSignalNodeBase*> m_id_map;
+  extTask* m_task;
+
+  // Private constructor to force factory usage
+  TwaiProtocol(const std::string& key) : BaseProtocol(key), m_task(nullptr), m_id_map() {};
+
+  // New instance creation
+  static TwaiProtocol* newInstance(const std::string& key) { return new TwaiProtocol(key); }
   
 public:
   ~TwaiProtocol() {
     end();
   }
   
-  // ========== FACTORY CON VERIFICACIÓN DE TIPO ==========
+  // ========== FACTORY METHODS ==========
   
   /**
-   * @brief Crea o obtiene una instancia compartida con verificación
+   * @brief Creates or gets a shared instance
    */
-  static TwaiProtocol* createShared(const std::string& key, 
-                                   DataSource* dataSource) {
-    return BaseProtocol::createShared<TwaiProtocol>(key, [key] { return new TwaiProtocol(key); }, dataSource->type());
+  static TwaiProtocol* createShared(const std::string& key, DataSource* dataSource) {
+    return BaseProtocol::createShared<TwaiProtocol>(key, newInstance, dataSource->type());
   }
   
   /**
-   * @brief Crea una instancia única (no compartida)
+   * @brief Creates unique instance (not shared)
    */
   static std::unique_ptr<TwaiProtocol> createUnique(const std::string& key) {
-    return BaseProtocol::createUnique<TwaiProtocol>(key, [key] { return new TwaiProtocol(key); });
+    return BaseProtocol::createUnique<TwaiProtocol>(key, newInstance);
   }
   
-  // ========== IMPLEMENTACIÓN DE MÉTODOS ==========
+  // ========== PUBLIC INTERFACE IMPLEMENTATION ==========
   
   bool configure() override {
     LockGuard lock(m_rec_mutex);
     
     // Leer configuración del registry
-    int txPin = getInt("tx_pin", 5);
-    int rxPin = getInt("rx_pin", 4);
-    long baud = getInt("baud", 500000);
+    int tx_pin = getInt("tx_pin", 21);
+    int rx_pin = getInt("rx_pin", 22);
+    int mode = getInt("mode");
+    twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
+        static_cast<gpio_num_t>(tx_pin),
+        static_cast<gpio_num_t>(rx_pin),
+        static_cast<twai_mode_t>(mode));
+
+    long baud = getLong("baud", 100000);
+    twai_timing_config_t t_config = getTiming(baud);
+
+    twai_filter_config_t f_config = {
+        .acceptance_code = getU32("f_accept", 0),
+        .acceptance_mask = getU32("f_mask", 0xFFFFFFFF),
+        .single_filter = getBool("f_single", false)
+    };
     
     log_d("[%s] Configuring TWAI: TX=%d, RX=%d, Baud=%ld",
-                  m_key.c_str(), txPin, rxPin, baud);
+                  m_key.c_str(), tx_pin, rx_pin, baud);
+
+    esp_err_t error = twai_driver_install(&g_config, &t_config, &f_config);
+    if (error != ESP_OK) {
+        log_e("[%s] Can't configure TWAI: %s", m_key.c_str(), esp_err_to_name(error));
+        return false;
+    }
     
     m_configured = true;
     return true;
   }
   
   bool begin() override {
-    if (!m_configured && !configure()) {
-      return false;
+    // Make sure that m_task stops in lock_ini2 point until begin() exit
+    LockGuard lock_ini1(m_rec_mutex);
+
+    if (!m_configured) {
+        log_d("[%s] Not configured", m_key.c_str());
+        return false;
+    }
+
+    if (m_started) {
+        log_d("[%s] Already started", m_key.c_str());
+        return false;
+    }
+
+    esp_err_t error = twai_start();
+    if (error != ESP_OK) {
+        log_e("[%s] Can't start TWAI: ", m_key.c_str(), esp_err_to_name(error));
+        return false;
     }
     
-    LockGuard lock(m_rec_mutex);
-    
     log_d("[%s] Starting TWAI communication", m_key.c_str());
+    m_task = new extTask("CAN_RX", 4096, tskIDLE_PRIORITY + 2, [this] {
+        twai_message_t rx_msg;
+        log_d("[%s] Starting Can Bus Receive Task...", m_key.c_str());
+        do { // Start a temporal scope (to not affect lock)
+            LockGuard lock_ini2(m_rec_mutex); // Wait for delete of lock_ini1
+            log_d("[%s] ... then, internal task should get to this point later!", m_key.c_str());
+        } while (false);
+
+        while(true) {
+            // Wait for message (blocking operation)
+            log_d("[%s] Waiting for Can Bus message...", m_key.c_str());
+            esp_err_t rx_error = twai_receive(&rx_msg, portMAX_DELAY);
+            if (rx_error == ESP_OK) {
+                log_d("[%s] Message received from id(%d)", m_key.c_str(), rx_msg.identifier);
+                LockGuard lock(m_rec_mutex);
+                auto id_it = m_id_map.find(rx_msg.identifier);
+                if (id_it != m_id_map.end()) {
+                    CANSignalNodeBase* node = id_it->second;
+                    // Now, send the message to the node
+                    node->processCanMessage(rx_msg);
+                    log_d("[%s] Message sent to node %p", m_key.c_str(), node);
+                } else {
+                    log_d("[%s] Id not found in list.", m_key.c_str());
+                }
+            } else {
+                log_e("[%s] Error receiving message: %s", m_key.c_str(), esp_err_to_name(rx_error));
+                vTaskDelay(millis2ticks(10000));
+            }
+        }
+    });
     
     m_started = true;
+    log_d("[%s] External task should get to this point first ...", m_key.c_str());
     return true;
   }
   
   void end() override {
-    LockGuard lock(m_rec_mutex);
+    LockGuard lock(m_rec_mutex, millis2ticks(20000));
     
     if (m_started) {
       log_d("[%s] Finishing TWAI communication", m_key.c_str());
+      delete m_task;
+      m_task = nullptr;
+      esp_err_t error = twai_stop();
+      log_d("[%s] TWAI stop status: %s", m_key.c_str(), esp_err_to_name(error));
+      error = twai_driver_uninstall();
+      log_d("[%s] TWAI uninstall status: %s", m_key.c_str(), esp_err_to_name(error));
       m_started = false;
     }
   }
   
-  // Métodos específicos de TWAI
-  bool sendMessage(uint32_t id, const uint8_t* data, uint8_t length);
-  bool receiveMessage(uint32_t& id, uint8_t* data, uint8_t& length);
-};
+  // ========== TWAI SPECIFIC METHODS ==========
 
+  esp_err_t sendMessage(uint32_t id, const uint8_t* data, uint8_t length, int timeout_ms) {
+    TickType_t timeout = millis2ticks(timeout_ms);
+    twai_message_t tx_msg = {0};
+    uint8_t secure_length = length < TWAI_FRAME_MAX_DLC ? length : TWAI_FRAME_MAX_DLC;
+    // Configuring message
+    tx_msg.identifier = id;
+    tx_msg.extd = false;
+    tx_msg.rtr = false;
+    tx_msg.ss = false;
+    tx_msg.self = false;
+    tx_msg.dlc_non_comp = false;
+    tx_msg.data_length_code = secure_length;
+    memcpy(&tx_msg.data[0], data, secure_length);
+    // Sending message
+    esp_err_t error = twai_transmit(&tx_msg, timeout);
+    log_d("[%s] Message send status: %s ", m_key.c_str(), esp_err_to_name(error));
+    return error;
+  }
 
-#if 0
-class TwaiProtocol : public BaseProtocol {
-    TwaiProtocol(const string& key) : BaseProtocol(key) {}
-public:
-    ~TwaiProtocol() = default;
+  esp_err_t sendMessage(const twai_message_t &tx_msg, int timeout_ms) {
+    TickType_t timeout = millis2ticks(timeout_ms);
+    esp_err_t error = twai_transmit(&tx_msg, timeout);
+    log_d("[%s] Message send status: %s ", m_key.c_str(), esp_err_to_name(error));
+    return error;
+  }
 
-    // Factory methods
-    static TwaiProtocol* createShared(const std::string& key) {
-        return BaseProtocol::createShared<TwaiProtocol>(key);
+  //bool receiveMessage(uint32_t& id, uint8_t* data, uint8_t& length);
+
+  bool addId(uint32_t id, CANSignalNodeBase *node) {
+    LockGuard lock(m_rec_mutex);
+    auto id_it = m_id_map.find(id);
+    if (id_it != m_id_map.end()) {
+        log_d("[%s] Can node for id(%d) already exist...", m_key.c_str(), id);
+        return false;
     }
+    m_id_map[id] = node;
+    log_d("[%s] Id(%d) added to node List! Addr: %p", m_key.c_str(), id, node);
+    return true;
+  }
 
-    static std::unique_ptr<TwaiProtocol> createUnique(const std::string& key) {
-        return BaseProtocol::createUnique<TwaiProtocol>(key);
+    twai_timing_config_t getTiming(long baudrate) {
+        switch (baudrate) {
+            case 25000: return TWAI_TIMING_CONFIG_25KBITS();
+            case 50000: return TWAI_TIMING_CONFIG_50KBITS();
+            case 125000: return TWAI_TIMING_CONFIG_125KBITS();
+            case 250000: return TWAI_TIMING_CONFIG_250KBITS();
+            case 500000: return TWAI_TIMING_CONFIG_500KBITS();
+            case 800000: return TWAI_TIMING_CONFIG_800KBITS();
+            case 1000000: return TWAI_TIMING_CONFIG_1MBITS();
+        }
+        long def_baudrate = 100000;
+        twai_timing_config_t def_config = TWAI_TIMING_CONFIG_100KBITS();
+        if (baudrate != def_baudrate) {
+            log_w("[%s] Baudrate '%d' not found. Returning %d", m_key.c_str(), baudrate, def_baudrate);
+        }
+        return def_config;
     }
-
-    bool configure() override {return false;}
-    bool begin() override {return false;}
-    void end() override {};
 };
-#endif
 
 
 // ************************************** CANSignalNode ************************************** //
@@ -141,91 +247,75 @@ twai_filter_config_t getFilter(JsonObject filter) { // TODO: interpret and fix
 }
 
 int DsCANBUS::build(JsonObject source, int index) {
-    m_filter = getFilter(source["filter"]);
-    log_d("Accep code: 0x%08X, mask: 0x%08X, single: %s", m_filter.acceptance_code, m_filter.acceptance_mask, m_filter.single_filter? "true" : "false");
+    twai_filter_config_t filter;
+    twai_mode_t mode_t;
+    filter = getFilter(source["filter"]);
+    log_d("Accep code: 0x%08X, mask: 0x%08X, single: %s", filter.acceptance_code, filter.acceptance_mask, filter.single_filter? "true" : "false");
     const String mode = source["mode"] | "";
-    m_mode = TWAI_MODE_NORMAL;
+    mode_t = TWAI_MODE_NORMAL;
     if (mode.isEmpty()) {
         if (mode == "listen")
-            m_mode = TWAI_MODE_LISTEN_ONLY;
+            mode_t = TWAI_MODE_LISTEN_ONLY;
         else if (mode == "noack")
-            m_mode = TWAI_MODE_NO_ACK;
+            mode_t = TWAI_MODE_NO_ACK;
     }
-    log_d("TWAI mode: %d", m_mode);
+    log_d("TWAI mode: %d", mode_t);
     // 1. Instance twai protocol, to register name
-    string name = string(type()) + "@0";
+    std::string name = string(type()) + "@0";
     m_twai = TwaiProtocol::createShared(name, this);
     log_d("%s protocol driver started at address %p", type(), m_twai);
     // 2. Set protocol parameters
     ConfigRegistry::setConfig(name, "tx_pin", 21);
     ConfigRegistry::setConfig(name, "rx_pin", 22);
-    ConfigRegistry::setConfig(name, "baud", 500000);
-    ConfigRegistry::setConfig(name, "mode", 1); // NORMAL mode
+    ConfigRegistry::setConfig(name, "baud", 100000);
+    ConfigRegistry::setConfig(name, "mode", mode_t);
+    ConfigRegistry::setConfig(name, "f_accept", filter.acceptance_code);
+    ConfigRegistry::setConfig(name, "f_mask", filter.acceptance_mask);
+    ConfigRegistry::setConfig(name, "f_single", filter.single_filter);
     // 3. Start configuration
-    if (!m_twai->configure()) return DIError::BUS_REQ_ERROR; // TODO: create bus init error
+    if (!m_twai->configure()) {
+        log_e("[%s] TWAI protocol driver not instanciated", name);
+        return DIError::BUS_REQ_ERROR; // TODO: create bus init error
+    }
     // Then, wait to one data node to start the protocol
 
     return DataSource::build(source, index);
 }
 
-
-// ************************************* CANBUSTaskQueue ************************************* //
-
-CANBUSTaskQueue& CANBUSTaskQueue::Instance() {
-  static CANBUSTaskQueue instance;
-  return instance;
-}
-
-bool CANBUSTaskQueue::addId(uint32_t id, CANSignalNodeBase *node) {
-    LockGuard lg(m_mutex);
-    auto id_it = m_id_map.find(id);
-    if (id_it != m_id_map.end()) {
-        log_d("Can node for id(%d) already exist...", id);
+bool DsCANBUS::addId(uint32_t id, CANSignalNodeBase *node) {
+    if (!m_twai) {
+        log_e("TWAI protocol driver lost instance");
         return false;
     }
-    m_id_map[id] = node;
-    log_d("Id(%d) added to node List! Addr: %p", id, node);
-    return true;
+
+    return m_twai->addId(id, node);
 }
 
-CANBUSTaskQueue::CANBUSTaskQueue() : m_mutex(Semaphore::create_mutex()), m_task(nullptr), m_id_map() {
-    LockGuard lg_ini1(m_mutex); // Mutex guard just started here!
-    if (m_started) { // To avoid multiple extTask instances
-        return;
+esp_err_t DsCANBUS::sendMessage(uint32_t id, const uint8_t* data, uint8_t length, int timeout_ms) {
+    if (!m_twai) {
+        log_e("TWAI protocol driver lost instance");
+        return false;
     }
-    m_task = new extTask("CAN_RX", 4096, tskIDLE_PRIORITY + 2, [this]{
-        twai_message_t rx_msg;
-        log_d("Starting Can Bus Receive Task...");
-        do { // Start a temporal scope (to not affect lg)
-            LockGuard lg_ini2(m_mutex); // Wait for delete of lg_ini1
-            log_d("... then, internal task should get to this point later!");
-        } while (false);
 
-        while(true) {
-            // Wait for message (blocking operation)
-            log_d("Waiting for Can Bus message...");
-            esp_err_t rx_error = twai_receive(&rx_msg, portMAX_DELAY);
-            if (rx_error == ESP_OK) {
-                log_d("Message received from id(%d)", rx_msg.identifier);
-                LockGuard lg(m_mutex);
-                auto id_it = m_id_map.find(rx_msg.identifier);
-                if (id_it != m_id_map.end()) {
-                    CANSignalNodeBase* node = id_it->second;
-                    // Now, send the message to the node
-                    node->processCanMessage(rx_msg);
-                    log_d("Message sent to node %p", node);
-                } else {
-                    log_d("Id not found in list.");
-                }
-            } else {
-                const char *tx_error_s = esp_err_to_name(rx_error);
-                log_e("Error receiving message: %s", tx_error_s);
-                vTaskDelay(pdMS_TO_TICKS(10000));
-            }
-        }
-    });
-    m_started = true;
-    log_d("External task should get to this point first ...");
+    return m_twai->sendMessage(id, data, length, timeout_ms);
+}
+
+bool DsCANBUS::runProtocol() {
+    if (!m_twai) {
+        log_e("TWAI protocol driver lost instance");
+        return false;
+    }
+    return m_twai->begin();
+}
+
+TwaiProtocol *DsCANBUS::protocol() {
+    return m_twai;
+}
+
+DsCANBUS::~DsCANBUS() {
+    if (!m_twai)
+        return;
+    m_twai->release();
 }
 
 
@@ -233,11 +323,10 @@ CANBUSTaskQueue::CANBUSTaskQueue() : m_mutex(Semaphore::create_mutex()), m_task(
 
 CANSignalNodeBase::CANSignalNodeBase() : 
     m_canId(0), m_extendedId(false), m_isTx(false), m_offset(0), m_last_value(0),
-    m_littleEndian(true), m_calc(nullptr), m_sendManager(nullptr), m_timeout(100) {}
+    m_littleEndian(true), m_sendManager(nullptr), m_timeout(100) {}
 
 CANSignalNodeBase::~CANSignalNodeBase() {
     delete m_sendManager;
-    delete m_calc;
 }
 
 int CANSignalNodeBase::build(JsonObject node, int index) {
@@ -260,12 +349,12 @@ int CANSignalNodeBase::build(JsonObject node, int index) {
     else
         m_mask = value2uint32_t(var);
 
-    // Take kay parameters from derived classes
-    typePrms type_prms = typeParams();
+    // Take size from derived classes
+    size_t tlen = typeLen();
 
     // Get byte offset
     m_offset = node["byte_offset"] | 0;
-    if (m_offset + type_prms.length > 8) {
+    if (m_offset + tlen > 8) {
         return DIError::PARAM_OUT_BOUNDS;
     }
 
@@ -274,13 +363,13 @@ int CANSignalNodeBase::build(JsonObject node, int index) {
     m_littleEndian = (String(node["byte_order"] | "little") == "little");
 
     log_d("Params type: %s", type());
-    log_d("Length: %u, max: %d, min: %d, first byte: %u, endianess: %s", type_prms.length, type_prms.max, type_prms.min, m_offset, m_littleEndian ? "little" : "big");
+    log_d("Length: %u, first byte: %u, endianess: %s", tlen, m_offset, m_littleEndian ? "little" : "big");
     log_d("Id: 0x%08X, mask: 0x%08X, ext: %s, dir: %s", m_canId, m_mask, m_extendedId ? "yes" : "no", m_isTx ? "tx" : "rx");
 
     // Add linear calculator
     float gain = node["gain"] | 1.0f;
     float offset = node["off"] | 0.0f;
-    m_calc = new LinearCalc(offset, gain, type_prms.max, type_prms.min);
+    buildCalc(offset, gain);
     m_unit = node["unit"] | "";
 
     // add send manager
@@ -293,9 +382,11 @@ int CANSignalNodeBase::build(JsonObject node, int index) {
 }
 
 void CANSignalNodeBase::start() {
+    DsCANBUS* source = static_cast<DsCANBUS*>(m_source);
     if (!m_isTx) {
-        CANBUSTaskQueue::Instance().addId(m_canId, this);
+        source->addId(m_canId, this);
     }
+    source->runProtocol();
 }
 
 void CANSignalNodeBase::request() {
@@ -304,18 +395,22 @@ void CANSignalNodeBase::request() {
             sendError(DIError::PARAM_WORNG_TYPE);
             return;
         }
-        
+
+        DsCANBUS* source = static_cast<DsCANBUS*>(m_source);
+        TwaiProtocol *protocol = source->protocol();
         float value = m_variant.convert<float>();
         twai_message_t message;
         packData(message, value);
-        
-        esp_err_t tx_error = twai_transmit(&message, pdMS_TO_TICKS(m_timeout));
+
+        esp_err_t tx_error = ESP_ERR_NO_MEM;
+        if (protocol != nullptr)
+            protocol->sendMessage(message, m_timeout);
         if ( tx_error != ESP_OK) {
             const char *tx_error_s = esp_err_to_name(tx_error);
             log_e("Value not sent, error: %s", tx_error_s);
             sendError(DIError::BUS_REQ_ERROR, tx_error_s);
         } else
-            log_e("Value sent: %.2f", value);
+            log_d("Value sent: %.2f", value);
     }
 }
 
@@ -336,25 +431,23 @@ void CANSignalNodeBase::processCanMessage(const twai_message_t &message) {
 }
 
 void CANSignalNodeBase::packData(twai_message_t &message, float value) {
-    // Aplicar transformación lineal
-    int irawValue = m_calc->receive(value);
 
     message.identifier = m_canId;
     message.extd = m_extendedId;
-    typePrms type_prms = typeParams();
-    message.data_length_code = m_offset + type_prms.length;
+    size_t tlen = typeLen();
+    message.data_length_code = m_offset + tlen;
 
     
     // Convertir a entero según el tipo
-    packData(&message.data[m_offset], irawValue);
+    packData(&message.data[m_offset], value);
 }
 
 float CANSignalNodeBase::unpackData(const twai_message_t &message) {
     // Extraer el entero segun el tipo
-    int irawValue = unpackData(&message.data[m_offset]);
+    float value = unpackData(&message.data[m_offset]);
 
     // Convertir a flotante mediante transformación lineal inversa
-    return m_calc->send(irawValue);
+    return value;
 }
 
 

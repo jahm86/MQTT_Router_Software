@@ -217,7 +217,7 @@ public:
 
 private:
   uint16_t m_address;       ///< Modbus register address
-  AnalogCalc* m_calc;
+  AnalogCalc<>* m_calc;
   AnSendManager* m_sendman;
   string m_unit;
 };

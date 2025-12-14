@@ -67,7 +67,7 @@ public:
 private:
   uint8_t m_pin;            ///< GPIO pin number (e.g., GPIO34)
   uint8_t m_bits;           ///< ADC resolution (e.g., 12 bits)
-  AnalogCalc* m_calc;       ///< Scaling calculator (raw → engineering units)
+  AnalogCalc<>* m_calc;     ///< Scaling calculator (raw → engineering units)
   string m_unit;            ///< Engineering unit (e.g., "V", "°C")
   AnSendManager* m_sendman; ///< Send policy manager
 };
@@ -196,7 +196,7 @@ public:
 
 private:
   uint8_t m_pin;            ///< GPIO pin number
-  AnalogCalc* m_calc;       ///< Scaling calculator (% → raw duty)
+  AnalogCalc<>* m_calc;     ///< Scaling calculator (% → raw duty)
   uint16_t m_freq;          ///< PWM frequency (Hz)
   uint8_t m_bits;           ///< Duty resolution (e.g., 8 bits = 0-255)
   int8_t m_channel;         ///< Allocated LEDC channel (-1 if invalid)

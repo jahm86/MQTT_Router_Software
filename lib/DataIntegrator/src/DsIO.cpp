@@ -28,7 +28,7 @@ int AnIn::build(JsonObject node, int index) {
   float offset = node["off"];
   float gain = node["gain"] | 1.0;
   m_bits = node["bits"] | UINT8_MAX;
-  m_calc = new LinearCalc(offset, gain, (1UL << m_bits) - 1);
+  m_calc = new LinearCalc<>(offset, gain, (1UL << m_bits) - 1);
   // Add send manager
   uint32_t mintime = node["mintime"] | 1;
   uint32_t maxtime = node["maxtime"] | 60;
@@ -178,7 +178,7 @@ int PWM::build(JsonObject node, int index) {
   float offset = node["off"];
   float gain = node["gain"] | 1.0;
   m_bits = node["bits"] | 8;
-  m_calc = new LinearCalc(offset, gain, (1UL << m_bits) - 1);
+  m_calc = new LinearCalc<>(offset, gain, (1UL << m_bits) - 1);
   // Add send manager
   uint32_t mintime = node["mintime"] | 1;
   uint32_t maxtime = node["maxtime"] | 60;
