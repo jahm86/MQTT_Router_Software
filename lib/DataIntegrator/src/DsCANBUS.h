@@ -46,8 +46,15 @@ public:
     void start() override;
     void request() override;
 
-    // Procesa un mensaje CAN recibido
+    // Proccess tx CANBUS messagge
     void processCanMessage(const twai_message_t &message);
+
+    // Enumerator for communication direction
+    enum class CommDir : char {
+        rx = 'R',   ///> Reception (from CAN bus to this board)
+        tx = 'T',   ///> Transmission (from this board to CAN bus)
+        rtx = 'X'   ///> Both directions
+    };
 
 protected:
     virtual size_t typeLen() = 0;
@@ -60,7 +67,7 @@ private:
     uint32_t m_canId;
     bool m_extendedId;
     uint32_t m_mask;
-    bool m_isTx; // true transmission, false for reception
+    CommDir m_dir;
     int m_timeout;
     uint8_t m_offset;
     float m_last_value;

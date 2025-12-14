@@ -170,14 +170,16 @@ public:
     memcpy(&tx_msg.data[0], data, secure_length);
     // Sending message
     esp_err_t error = twai_transmit(&tx_msg, timeout);
-    log_d("[%s] Message send status: %s ", m_key.c_str(), esp_err_to_name(error));
+    log_d("[%s] Message id(%u) of size(%u) sent, status: %s", m_key.c_str(),
+        tx_msg.identifier, tx_msg.data_length_code, esp_err_to_name(error));
     return error;
   }
 
   esp_err_t sendMessage(const twai_message_t &tx_msg, int timeout_ms) {
     TickType_t timeout = millis2ticks(timeout_ms);
     esp_err_t error = twai_transmit(&tx_msg, timeout);
-    log_d("[%s] Message send status: %s ", m_key.c_str(), esp_err_to_name(error));
+    log_d("[%s] Message id(%u) of size(%u) sent, status: %s", m_key.c_str(),
+        tx_msg.identifier, tx_msg.data_length_code, esp_err_to_name(error));
     return error;
   }
 
@@ -322,7 +324,7 @@ DsCANBUS::~DsCANBUS() {
 // ************************************ CANSignalNodeBase ************************************ //
 
 CANSignalNodeBase::CANSignalNodeBase() : 
-    m_canId(0), m_extendedId(false), m_isTx(false), m_offset(0), m_last_value(0),
+    m_canId(0), m_extendedId(false), m_dir(CommDir::rx), m_offset(0), m_last_value(0),
     m_littleEndian(true), m_sendManager(nullptr), m_timeout(100) {}
 
 CANSignalNodeBase::~CANSignalNodeBase() {
@@ -353,18 +355,23 @@ int CANSignalNodeBase::build(JsonObject node, int index) {
     size_t tlen = typeLen();
 
     // Get byte offset
-    m_offset = node["byte_offset"] | 0;
+    m_offset = node["b_offset"] | 0;
     if (m_offset + tlen > 8) {
         return DIError::PARAM_OUT_BOUNDS;
     }
 
-    // Get direction and endianess
-    m_isTx = (String(node["direction"] | "rx") == "tx");
-    m_littleEndian = (String(node["byte_order"] | "little") == "little");
+    // Get direction (no comparison to rx, as it is default)
+    String dir = node["dir"] | "rx";
+    if (dir == "rtx")
+        m_dir = CommDir::rtx;
+    else if (dir == "tx")
+        m_dir = CommDir::tx;
+    // Get endianess
+    m_littleEndian = (String(node["b_order"] | "little") == "little");
 
     log_d("Params type: %s", type());
     log_d("Length: %u, first byte: %u, endianess: %s", tlen, m_offset, m_littleEndian ? "little" : "big");
-    log_d("Id: 0x%08X, mask: 0x%08X, ext: %s, dir: %s", m_canId, m_mask, m_extendedId ? "yes" : "no", m_isTx ? "tx" : "rx");
+    log_d("Id: 0x%08X, mask: 0x%08X, ext: %s, dir: %c", m_canId, m_mask, m_extendedId ? "yes" : "no", static_cast<char>(m_dir));
 
     // Add linear calculator
     float gain = node["gain"] | 1.0f;
@@ -383,14 +390,18 @@ int CANSignalNodeBase::build(JsonObject node, int index) {
 
 void CANSignalNodeBase::start() {
     DsCANBUS* source = static_cast<DsCANBUS*>(m_source);
-    if (!m_isTx) {
+    if (m_dir == CommDir::rtx || m_dir == CommDir::rx) {
         source->addId(m_canId, this);
     }
     source->runProtocol();
 }
 
 void CANSignalNodeBase::request() {
-    if (m_isTx && m_cmd == DataNode::WRITE) {
+    if (m_cmd == DataNode::WRITE) {
+        if (m_dir == CommDir::rx) {
+            log_w("Trying to write an only-receive node");
+            return;
+        }
         if (!m_variant.can_convert<float>()) {
             sendError(DIError::PARAM_WORNG_TYPE);
             return;
@@ -404,13 +415,13 @@ void CANSignalNodeBase::request() {
 
         esp_err_t tx_error = ESP_ERR_NO_MEM;
         if (protocol != nullptr)
-            protocol->sendMessage(message, m_timeout);
+            tx_error = protocol->sendMessage(message, m_timeout);
         if ( tx_error != ESP_OK) {
             const char *tx_error_s = esp_err_to_name(tx_error);
             log_e("Value not sent, error: %s", tx_error_s);
             sendError(DIError::BUS_REQ_ERROR, tx_error_s);
         } else
-            log_d("Value sent: %.2f", value);
+            log_d("Value sent: %.2f %s", value, m_unit.c_str());
     }
 }
 

@@ -29,7 +29,8 @@
     "type": "can",
     "nodes": [
       {"name": "spd", "type": "uint16", "id": 1233, "gain": 10, "unit": "Km/h"},
-      {"name": "dst", "type": "int32", "id": 1234, "gain": 1, "unit": "Km"}
+      {"name": "dst", "type": "int32", "id": 1234, "gain": 327.27, "unit": "Km"},
+      {"name": "val", "type": "uint16", "id": 90, "dir": "rtx"}
     ]
   }
 ]
