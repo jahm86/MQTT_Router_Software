@@ -14,7 +14,7 @@
       <div class="card">
         <form action="/wifi" method="POST">
           <p>
-            <h3>WiFi</h3>
+            <h3>WiFi</h3><hr>
             <label for="ssid">SSID</label>
             <input type="text" id="ssid" name="ssid" value="%wifi:ssid%"><br>
             <label for="wpass">Password</label>
@@ -33,7 +33,7 @@
       <div class="card">
         <form action="/mqtt" id="mqtt" method="POST" enctype="multipart/form-data">
           <p>
-            <h3>MQTT</h3>
+            <h3>MQTT</h3><hr>
             <label for="sock" id="sock">Socket type</label>
               <input type="radio" id="sockmqtt" name="sock" value="mqtt"/>mqtt
               <input type="radio" id="sockmqtts" name="sock" value="mqtts"/>mqtts
@@ -58,7 +58,7 @@
       <div class="card">
         <form action="/serial" method="POST">
           <p>
-            <h3>Serial Port</h3>
+            <h3>Serial Port</h3><hr>
             <label for="speed">Speed</label>
             <input type="number" id="speed" name="speed" min=75 max=5000000 value=%serial:speed%><br>
             <label for="bits">Data bits</label>
@@ -69,6 +69,41 @@
               <input type="radio" id="parityn" name="parity" value="none"/>NONE
               <input type="radio" id="paritye" name="parity" value="even"/>EVEN
               <input type="radio" id="parityo" name="parity" value="odd"/>ODD<br/><br>
+            <input type="submit" value="Submit">
+          </p>
+        </form>
+      </div>
+      <div class="card">
+        <form action="/canbus" method="POST">
+          <p>
+            <h3>CANBUS Port</h3><hr>
+            <div class="flex-container">
+              <label for="baud">Baud rate</label>
+              <select id="cb_baud" name="baud">
+                <option value="25000">25kbps</option>
+                <option value="50000">50kbps</option>
+                <option value="100000" selected>100kbps</option>
+                <option value="125000">125kbps</option>
+                <option value="250000">250kbps</option>
+                <option value="500000">500kbps</option>
+                <option value="800000">800kbps</option>
+                <option value="1000000">1Mbps</option>
+              </select>
+            </div>
+            <div class="flex-container">
+              <label for="f_accept">Acceptance code</label>
+              <input type="text" name="f_accept" placeholder="Default is 0x0" value="%canbus:f_accept%">
+            </div>
+            <div class="flex-container">
+              <label for="f_mask">Acceptance mask</label>
+              <input type="text" name="f_mask" placeholder="Default is 0xFFFFFFFF" value="%canbus:f_mask%">
+            </div>
+            <label for="f_single">Single filter</label>
+            <label class="switch">
+              <input type="hidden" name="f_single" value="false">
+              <input type="checkbox" id="cb_single" name="f_single" value="true" checked>
+              <span class="slider"></span>
+            </label><br>
             <input type="submit" value="Submit">
           </p>
         </form>
@@ -103,6 +138,8 @@
 </body>
 <script>
   var paritysel="%serial:parity%";
-  var socksel="%mqtt:sock%"
+  var socksel="%mqtt:sock%";
+  var cb_baudsel = "%canbus:baud%";
+  var cb_issingle = "%canbus:f_single%";
 </script>
 </html>

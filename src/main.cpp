@@ -31,7 +31,6 @@
 
 // External libraries
 #include <PsychicMqttClient.h>
-#include <ModbusClientRTU.h>
 #include <ArduinoJson.h>
 #include <DataIntegrator.h>
 #include <diutils.h>
@@ -40,11 +39,9 @@
 PsychicMqttClient mqttClient;
 Ticker mqttConnectTicker;
 Ticker wifiConnectTicker;
+// If stay true, enters web server mode. If false, enters MQTT client mode
 bool cfg_mode_http_server = true;
 DataBus dataBus;
-// Create a ModbusRTU client instance
-// The RS485 module has no halfduplex, so the parameter with the DE/RE pin is required!
-ModbusClientRTU MBCRTU(RS485_DEREPIN);
 Ticker MbRequestTicker;
 // Create custom server instance
 CustomServer* server;
@@ -88,75 +85,6 @@ String assemble_uri(const char *socket_type, const char *url, int port) {
   if (port > 0)
     uri += ":" + String(port);
   return uri;
-}
-
-// Expression function to encode data_b, stop_b and parity_b into an unique value for switch statement
-constexpr uint encode_par_mode(uint data_b, uint stop_b, uint parity_b) {
-  return ((data_b << 16) & 0x00ff0000) | ((stop_b << 8) & 0x0000ff00) | (parity_b & 0x000000ff);
-}
-
-// Returns a SerialConfig value in function of data_b, stop_b and parity_b
-uint32_t set_data_stop_parity(int data_b, int stop_b, String parity_b) {
-  // TODO: put all modes
-  uint parity = parity_b == parity_odd ? par_int_odd : parity_b == parity_even ? par_int_even : par_int_none;
-  uint data_bits = data_b > 8 ? 8 : data_b < 5 ? 5 : data_b;
-  uint stop_bits = stop_b > 2 ? 2 : stop_b < 1 ? 1 : stop_b;
-  uint encoded = encode_par_mode(data_bits, stop_bits, parity);
-  log_d("Encoded value %d", encoded);
-  switch (encoded) {
-  // None
-  case encode_par_mode(5, 1, par_int_none):
-    return SERIAL_5N1;
-  case encode_par_mode(6, 1, par_int_none):
-    return SERIAL_6N1;
-  case encode_par_mode(7, 1, par_int_none):
-    return SERIAL_7N1;
-  case encode_par_mode(8, 1, par_int_none):
-    return SERIAL_8N1;
-  case encode_par_mode(5, 2, par_int_none):
-    return SERIAL_5N2;
-  case encode_par_mode(6, 2, par_int_none):
-    return SERIAL_6N2;
-  case encode_par_mode(7, 2, par_int_none):
-    return SERIAL_7N2;
-  case encode_par_mode(8, 2, par_int_none):
-    return SERIAL_8N2;
-  // Even
-  case encode_par_mode(5, 1, par_int_even):
-    return SERIAL_5E1;
-  case encode_par_mode(6, 1, par_int_even):
-    return SERIAL_6E1;
-  case encode_par_mode(7, 1, par_int_even):
-    return SERIAL_7E1;
-  case encode_par_mode(8, 1, par_int_even):
-    return SERIAL_8E1;
-  case encode_par_mode(5, 2, par_int_even):
-    return SERIAL_5E2;
-  case encode_par_mode(6, 2, par_int_even):
-    return SERIAL_6E2;
-  case encode_par_mode(7, 2, par_int_even):
-    return SERIAL_7E2;
-  case encode_par_mode(8, 2, par_int_even):
-    return SERIAL_8E2;
-  // Odd
-  case encode_par_mode(5, 1, par_int_odd):
-    return SERIAL_5O1;
-  case encode_par_mode(6, 1, par_int_odd):
-    return SERIAL_6O1;
-  case encode_par_mode(7, 1, par_int_odd):
-    return SERIAL_7O1;
-  case encode_par_mode(8, 1, par_int_odd):
-    return SERIAL_8O1;
-  case encode_par_mode(5, 2, par_int_odd):
-    return SERIAL_5O2;
-  case encode_par_mode(6, 2, par_int_odd):
-    return SERIAL_6O2;
-  case encode_par_mode(7, 2, par_int_odd):
-    return SERIAL_7O2;
-  case encode_par_mode(8, 2, par_int_odd):
-    return SERIAL_8O2;
-  }
-  return SERIAL_8N1;
 }
 
 // Funciton to connect WiFi client
@@ -393,13 +321,6 @@ void setup() {
   // File handlers
   File nodesFile, paramsFile, certFile;
 
-  // Parameters (Only serial parameters in local scope)
-  // Serial devides port
-  unsigned long serial_speed;
-  int serial_data_bits;
-  int serial_stop_bits;
-  String serial_parity;
-
   // primary configs
   pinMode(CFG_MODE_SW, INPUT_PULLUP);
   pinMode(BUILTIN_LED, OUTPUT);
@@ -485,11 +406,13 @@ void setup() {
     // Get Configuration parameters
     // ********** Getting network parameters ********** //
     log_d("Getting network parameters");
-    netw_ssid = doc[F(WF_OBJ_NAME)][F(WF_SSID_KEY)] | EMPTY_STR;
-    netw_password = doc[F(WF_OBJ_NAME)][F(WF_PASS_KEY)] | EMPTY_STR;
-    netw_ipaddr = doc[F(WF_OBJ_NAME)][F(WF_IP_KEY)] | def_ipaddr;
-    netw_gateway = doc[F(WF_OBJ_NAME)][F(WF_GW_KEY)] | def_gateway;
-    netw_subnet = doc[F(WF_OBJ_NAME)][F(WF_SUBNET_KEY)] | def_subnet;
+    // Temporal variant value
+    JsonVariant dummy_var = doc[F(WF_OBJ_NAME)];
+    netw_ssid = dummy_var[F(WF_SSID_KEY)] | EMPTY_STR;
+    netw_password = dummy_var[F(WF_PASS_KEY)] | EMPTY_STR;
+    netw_ipaddr = dummy_var[F(WF_IP_KEY)] | def_ipaddr;
+    netw_gateway = dummy_var[F(WF_GW_KEY)] | def_gateway;
+    netw_subnet = dummy_var[F(WF_SUBNET_KEY)] | def_subnet;
     log_d("SSID: \"%s\"  Pwd: \"%s\"  IP: \"%s\"  Gw: \"%s\"  Sn: \"%s\"",
     netw_ssid.c_str(), netw_password.c_str(), netw_ipaddr.c_str(), netw_gateway.c_str(), netw_subnet.c_str());
     if(netw_ssid.isEmpty() || netw_password.isEmpty()) { // Yes, you must have network protected!
@@ -498,15 +421,16 @@ void setup() {
     }
     // ********** Getting MQTT parameters ********** //
     log_d("Getting MQTT parameters");
+    dummy_var = doc[F(MQ_OBJ_NAME)];
     mqtt_server_uri = assemble_uri(
-      doc[F(MQ_OBJ_NAME)][F(MQ_SOCK_TYPE)] | def_sock,
-      doc[F(MQ_OBJ_NAME)][F(MQ_URL_KEY)] | EMPTY_STR,
-      doc[F(MQ_OBJ_NAME)][F(MQ_PORT_KEY)].as<int>()
+      dummy_var[F(MQ_SOCK_TYPE)] | def_sock,
+      dummy_var[F(MQ_URL_KEY)] | EMPTY_STR,
+      dummy_var[F(MQ_PORT_KEY)].as<int>()
     );
-    mqtt_user = doc[F(MQ_OBJ_NAME)][F(MQ_USER_KEY)] | EMPTY_STR;
-    mqtt_password = doc[F(MQ_OBJ_NAME)][F(MQ_PASS_KEY)] | EMPTY_STR;
-    mqtt_topic =  doc[F(MQ_OBJ_NAME)][F(MQ_DEVID_KEY)] | EMPTY_STR;
-    String origin_ca_name = doc[F(MQ_OBJ_NAME)][F(CERT_OBJ_NAME)] | EMPTY_STR;
+    mqtt_user = dummy_var[F(MQ_USER_KEY)] | EMPTY_STR;
+    mqtt_password = dummy_var[F(MQ_PASS_KEY)] | EMPTY_STR;
+    mqtt_topic =  dummy_var[F(MQ_DEVID_KEY)] | EMPTY_STR;
+    String origin_ca_name = dummy_var[F(CERT_OBJ_NAME)] | EMPTY_STR;
     log_d("MQTT server URI: \"%s\"  User: \"%s\"  Pwd: \"%s\"  Topic: \"%s\"",
     mqtt_server_uri.c_str(), mqtt_user.c_str(), mqtt_password.c_str(), mqtt_topic.c_str());
     setTopics();
@@ -535,18 +459,47 @@ void setup() {
       Serial.println("MQTT parameters not valid");
       break;
     }
-    // ********** Getting Serial parameters ********** //
+    // ********** Getting Serial RS485 (Modbus) parameters ********** //
     log_d("Getting Serial parameters");
-    serial_speed = doc[F(SP_OBJ_NAME)][F(SP_SPEED_KEY)].as<int>();
-    serial_data_bits = doc[F(SP_OBJ_NAME)][F(SP_BITS_KEY)].as<int>();
-    serial_stop_bits = doc[F(SP_OBJ_NAME)][F(SP_STOPB_KEY)].as<int>();
-    serial_parity = doc[F(SP_OBJ_NAME)][F(SP_PARITY_KEY)] | def_parity;
-    log_d("Baudrate: %u  Data: %d  Stop: %d  Parity: \"%s\"", serial_speed, serial_data_bits, serial_stop_bits, serial_parity.c_str());
+    dummy_var = doc[F(SP_OBJ_NAME)];
+    uint32_t serial_speed = dummy_var[F(SP_SPEED_KEY)].as<uint32_t>();
+    int serial_data_bits = dummy_var[F(SP_BITS_KEY)].as<int>();
+    int serial_stop_bits = dummy_var[F(SP_STOPB_KEY)].as<int>();
+    std::string serial_parity = dummy_var[F(SP_PARITY_KEY)] | def_parity;
     if(serial_speed == 0 || serial_data_bits == 0 || serial_stop_bits == 0) {
       Serial.println("Serial parameters not valid");
       break;
     }
-    // Checks if user requested HTTP server mode
+    const std::string modbus_key = "ModbusRTU@0";
+    ConfigRegistry::registerProtocol(modbus_key);
+    ConfigRegistry::setConfig(modbus_key, SP_SPEED_KEY, serial_speed);
+    ConfigRegistry::setConfig(modbus_key, SP_INST_KEY, RS485_UART_NUM);
+    ConfigRegistry::setConfig(modbus_key, SP_ROPIN_KEY, RS485_ROPIN);
+    ConfigRegistry::setConfig(modbus_key, SP_DIPIN_KEY, RS485_DIPIN);
+    ConfigRegistry::setConfig(modbus_key, SP_DRPIN_KEY,RS485_DEREPIN );
+    ConfigRegistry::setConfig(modbus_key, SP_TOUT_KEY, (uint32_t) RS485_TIMEOUT_INTERVAL);
+    ConfigRegistry::setConfig(modbus_key, SP_BITS_KEY, serial_data_bits);
+    ConfigRegistry::setConfig(modbus_key, SP_STOPB_KEY, serial_stop_bits);
+    ConfigRegistry::setConfig(modbus_key, SP_PARITY_KEY, serial_parity);
+    // ********** Getting CANBUS parameters ********** //
+    log_d("Getting CANBUS parameters");
+    dummy_var = doc[F(CB_OBJ_NAME)];
+    uint32_t canbus_speed = dummy_var[F(CB_BAUD_KEY)].as<uint32_t>();
+    if(canbus_speed == 0) {
+      Serial.println("CANBUS parameters not valid");
+      break;
+    }
+    const std::string canbus_key = "CANBUS@0";
+    ConfigRegistry::registerProtocol(canbus_key);
+    ConfigRegistry::setConfig(canbus_key, CB_BAUD_KEY, canbus_speed);
+    ConfigRegistry::setConfig(canbus_key, CB_RX_KEY, TWAI_RXDPIN);
+    ConfigRegistry::setConfig(canbus_key, CB_TX_KEY, TWAI_TXDPIN);
+    ConfigRegistry::setConfig(canbus_key, CB_RS_KEY, TWAI_RSPIN);
+    ConfigRegistry::setConfig(canbus_key, CB_MODE_KEY, dummy_var[F(CB_MODE_KEY)].as<int>());
+    ConfigRegistry::setConfig(canbus_key, CB_ACCEPT_KEY, dummy_var[F(CB_ACCEPT_KEY)].as<std::string>());
+    ConfigRegistry::setConfig(canbus_key, CB_MASK_KEY, dummy_var[F(CB_MASK_KEY)].as<std::string>());
+    ConfigRegistry::setConfig(canbus_key, CB_SINGLE_KEY, dummy_var[F(CB_SINGLE_KEY)].as<bool>());
+    // ********** Checks if user requested HTTP server mode ********** //
     if (digitalRead(CFG_MODE_SW) == LOW) {
       Serial.println("Config button pressed. HTTP server mode requested by user");
       break;
@@ -598,21 +551,6 @@ void setup() {
       Serial.printf("%02X:", baseMac[i]);
     }
     Serial.printf("%02X\n", baseMac[5]);
-
-    // Set up SerialRef connected to Modbus RTU
-    HardwareSerial& SerialRef = Serial2;
-    uint32_t mode_config = set_data_stop_parity(serial_data_bits, serial_stop_bits, serial_parity);
-    log_d("Returned value %d", mode_config);
-    log_d("Setting up Serial connection for Modbus RTU");
-    RTUutils::prepareHardwareSerial(SerialRef);
-    SerialRef.begin(serial_speed, mode_config, RS485_ROPIN, RS485_DIPIN);
-
-    // Set up ModbusRTU client
-    // Set message timeout
-    MBCRTU.setTimeout(RS485_TIMEOUT_INTERVAL);
-    // Start ModbusRTU background task
-    StreamLink::Instance().SetNew(&MBCRTU);
-    MBCRTU.begin(SerialRef);
 
     // Set Wifi mode to station and event callback
     log_d("Setting Wifi mode to station and event callback");

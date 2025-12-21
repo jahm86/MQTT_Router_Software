@@ -24,6 +24,9 @@ template<>
 uint32_t convertTo<uint32_t>(const std::string& value) { return std::stoul(value); };
 
 template<>
+int8_t convertTo<int8_t>(const std::string& value) { return std::stoi(value); };
+
+template<>
 float convertTo<float>(const std::string& value) { return std::stof(value); };
 
 template<>
@@ -281,37 +284,17 @@ std::string ConfigRegistry::getConfig(const std::string& protocolKey,
   return defaultValue;
 }
 
+bool ConfigRegistry::hasConfig(const std::string& protocolKey,
+                              const std::string& paramKey) {
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
 
-//************************************** Stream Link **************************************//
-
-Semaphore StreamLink::m_mutex(Semaphore::create_mutex());
-
-StreamLink::StreamLink() : m_mbcrtu(nullptr) {}
-
-StreamLink& StreamLink::Instance() {
-  static StreamLink instance;
-  return instance;
+  auto it = instance.registry.find(protocolKey);
+  if (it == instance.registry.end())
+    return false;
+  auto paramIt = it->second.config.find(paramKey);
+  return paramIt != it->second.config.end();
 }
-
-void StreamLink::SetNew(ModbusClientRTU* modbusClient) {
-  LockGuard lg(m_mutex);
-  if (m_mbcrtu == nullptr) {
-    log_d("Saving modbusClient");
-    m_mbcrtu = modbusClient;
-  }
-}
-
-ModbusClientRTU* StreamLink::Get() {
-  return m_mbcrtu;
-}
-
-StreamLink::~StreamLink() {
-  /*if (m_mbcrtu != nullptr) {
-    delete m_mbcrtu;
-    m_mbcrtu = nullptr;
-  }*/
-}
-
 
 //************************************** A Gossip Allocator :) **************************************//
 

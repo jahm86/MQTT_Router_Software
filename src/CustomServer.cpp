@@ -96,6 +96,12 @@ void CustomServer::startServer() {
     CustomServer::save(m_params_f, request, SP_OBJ_NAME);
     request->redirect("/");
   });
+  // Request CANBUS parameters
+  m_server->on("/canbus", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    log_d("CANBUS parameters save requested");
+    CustomServer::save(m_params_f, request, CB_OBJ_NAME);
+    request->redirect("/");
+  });
   // Request save communicating nodes parameters
   m_server->on("/nodes", HTTP_POST, [this](AsyncWebServerRequest* request) {
     log_d("Data Nodes save requested");

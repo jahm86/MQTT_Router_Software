@@ -72,6 +72,7 @@
 #define ARDUINOJSON_USE_LONG_LONG       0
 
 // RS485 serial port parameters
+#define RS485_UART_NUM          2           // RS485 UART device number
 #define RS485_ROPIN             GPIO_NUM_16 // RS485 RX PIN (Receiver Output)
 #define RS485_DIPIN             GPIO_NUM_17 // RS485 TX PIN (Driver Input)
 #define RS485_DEREPIN           GPIO_NUM_4  // RS485 DEREPIN (Driver Output Enable/Receiver Output Enable)
@@ -103,10 +104,25 @@
 #define MQ_FI_PRINT   "fprint"
 // Serial (RS485) Port
 #define SP_OBJ_NAME   "serial"
+#define SP_INST_KEY   "inst"
 #define SP_SPEED_KEY  "speed"
+#define SP_ROPIN_KEY  "rxpin"
+#define SP_DIPIN_KEY  "txpin"
+#define SP_DRPIN_KEY  "rtspin"
+#define SP_TOUT_KEY   "timeout"
 #define SP_BITS_KEY   "bits"
 #define SP_STOPB_KEY  "stop"
 #define SP_PARITY_KEY "parity"
+// CANBUS Port
+#define CB_OBJ_NAME   "canbus"
+#define CB_BAUD_KEY   "baud"
+#define CB_RX_KEY     "rx_pin"
+#define CB_TX_KEY     "tx_pin"
+#define CB_RS_KEY     "rs_pin"
+#define CB_MODE_KEY   "mode"
+#define CB_ACCEPT_KEY "f_accept"
+#define CB_MASK_KEY   "f_mask"
+#define CB_SINGLE_KEY "f_single"
 // Node
 #define ND_OBJ_NAME   "node"
 #define ND_SEPARATOR  ':'

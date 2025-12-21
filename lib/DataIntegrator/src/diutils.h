@@ -515,41 +515,6 @@ public:
 };
 
 
-//************************************** Stream Link **************************************//
-
-/**
- * @class StreamLink
- * @brief Manages shared communication interfaces (Modbus, CAN, etc.).
- * @note Singleton pattern to prevent multiple instances.
- */
-class StreamLink {
-public:
-  // Forbidded operations
-  StreamLink(StreamLink& other) = delete;
-  void operator=(const StreamLink&) = delete;
-  // Get this StreamLink instance
-  static StreamLink& Instance();
-  
-  /**
-   * @brief Replaces current Modbus client.
-   */
-  void SetNew(ModbusClientRTU* modbusClient);
-
-  /**
-   * @brief Gets Modbus client instance.
-   */
-  ModbusClientRTU* Get();
-
-private:
-  ModbusClientRTU* m_mbcrtu;
-  static Semaphore m_mutex;
-
-protected:
-  StreamLink();
-  ~StreamLink();
-};
-
-
 //************************************** Helper for Task Management **************************************//
 
 /**

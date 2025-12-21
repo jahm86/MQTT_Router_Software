@@ -1,5 +1,5 @@
+
 #include "DsCANBUS.h"
-#include "diutils.h"
 #include <ArduinoJson.h>
 #include <string.h>
 
@@ -44,20 +44,17 @@ public:
   static std::unique_ptr<TwaiProtocol> createUnique(const std::string& key) {
     return BaseProtocol::createUnique<TwaiProtocol>(key, newInstance);
   }
-  
+
   // ========== PUBLIC INTERFACE IMPLEMENTATION ==========
-  
+
   bool configure() override {
     LockGuard lock(m_rec_mutex);
-    
-    // Leer configuración del registry
-    int tx_pin = getInt("tx_pin", 21);
-    int rx_pin = getInt("rx_pin", 22);
-    int mode = getInt("mode");
+
+    // Read registry configuration
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
-        static_cast<gpio_num_t>(tx_pin),
-        static_cast<gpio_num_t>(rx_pin),
-        static_cast<twai_mode_t>(mode));
+        static_cast<gpio_num_t>(getInt("tx_pin", 21)),
+        static_cast<gpio_num_t>(getInt("rx_pin", 22)),
+        static_cast<twai_mode_t>(getInt("mode")));
 
     long baud = getLong("baud", 100000);
     twai_timing_config_t t_config = getTiming(baud);
@@ -65,11 +62,13 @@ public:
     twai_filter_config_t f_config = {
         .acceptance_code = getU32("f_accept", 0),
         .acceptance_mask = getU32("f_mask", 0xFFFFFFFF),
-        .single_filter = getBool("f_single", false)
+        .single_filter = getBool("f_single", true)
     };
     
-    log_d("[%s] Configuring TWAI: TX=%d, RX=%d, Baud=%ld",
-                  m_key.c_str(), tx_pin, rx_pin, baud);
+    log_d("[%s] Settings: tx(%d) rx(%d) mode(%d) baud(%ld) ", m_key.c_str(),
+        g_config.tx_io, g_config.rx_io, g_config.mode, baud);
+    log_d("[%s] Filter: code(0x%08X) mask(0x%08X), single(%s)", m_key.c_str(),
+        f_config.acceptance_code, f_config.acceptance_mask, f_config.single_filter ? "true" : "false");
 
     esp_err_t error = twai_driver_install(&g_config, &t_config, &f_config);
     if (error != ESP_OK) {
@@ -217,22 +216,35 @@ public:
 };
 
 
-// ************************************** CANSignalNode ************************************** //
+// ************************************** DsCANBUS ************************************** //
 
-uint32_t value2uint32_t(JsonVariant value) { // TODO: check for string
-    const char *vs = value.as<const char*>();
-    if (vs == nullptr) {
-        return value.as<uint32_t>();
+uint32_t value2uint32_t(const std::string &value, uint32_t ret_default = 0) {
+    char* end_ptr;
+    errno = 0;
+    // Conversion with pointer validation and number format inspection
+    uint32_t ret_value = std::strtoul(value.c_str(), &end_ptr, 0);
+    // Check for bounds
+    if (errno == ERANGE) {
+        log_e("Value \"%s\" out of range", value.c_str());
+        return ret_default;
     }
-    char *endPtr;
-    // Assuming that, if string, is hex
-    uint32_t ui32value = std::strtol(vs, &endPtr, 16);
-    return ui32value;
+    // Check for valid argument
+    if (end_ptr == value.c_str()) {
+        log_e("Value \"%s\" Not valid", value.c_str());
+        return ret_default;
+    }
+    // Check if got to the end
+    if (*end_ptr != '\0') {
+        log_e("Partial conversion of \"%s\"", value.c_str());
+        return ret_default;
+    }
+    return ret_value;
 }
 
-twai_filter_config_t getFilter(JsonObject filter) { // TODO: interpret and fix
+twai_filter_config_t getFilter(JsonObject filter,
+    const twai_filter_config_t& f_default = TWAI_FILTER_CONFIG_ACCEPT_ALL()) { // TODO: interpret and fix
     if (filter.isNull())
-        return TWAI_FILTER_CONFIG_ACCEPT_ALL();
+        return f_default;
     if (!filter["code"].isNull()) {
         uint32_t code = value2uint32_t(filter["code"]);
         uint32_t mask = value2uint32_t(filter["mask"]);
@@ -249,34 +261,39 @@ twai_filter_config_t getFilter(JsonObject filter) { // TODO: interpret and fix
 }
 
 int DsCANBUS::build(JsonObject source, int index) {
-    twai_filter_config_t filter;
-    twai_mode_t mode_t;
-    filter = getFilter(source["filter"]);
-    log_d("Accep code: 0x%08X, mask: 0x%08X, single: %s", filter.acceptance_code, filter.acceptance_mask, filter.single_filter? "true" : "false");
     const String mode = source["mode"] | "";
-    mode_t = TWAI_MODE_NORMAL;
-    if (mode.isEmpty()) {
+    twai_mode_t mode_t = TWAI_MODE_NORMAL;
+    if (!mode.isEmpty()) {
         if (mode == "listen")
             mode_t = TWAI_MODE_LISTEN_ONLY;
         else if (mode == "noack")
             mode_t = TWAI_MODE_NO_ACK;
     }
-    log_d("TWAI mode: %d", mode_t);
     // 1. Instance twai protocol, to register name
     std::string name = string(type()) + "@0";
     m_twai = TwaiProtocol::createShared(name, this);
     log_d("%s protocol driver started at address %p", type(), m_twai);
     // 2. Set protocol parameters
-    ConfigRegistry::setConfig(name, "tx_pin", 21);
-    ConfigRegistry::setConfig(name, "rx_pin", 22);
-    ConfigRegistry::setConfig(name, "baud", 100000);
-    ConfigRegistry::setConfig(name, "mode", mode_t);
-    ConfigRegistry::setConfig(name, "f_accept", filter.acceptance_code);
-    ConfigRegistry::setConfig(name, "f_mask", filter.acceptance_mask);
-    ConfigRegistry::setConfig(name, "f_single", filter.single_filter);
+    // Finds if mode already exist, if not, put mode_t as default. Then create/change mode
+    int mode_int = ConfigRegistry::getConfigAs<int>(name, "mode", mode_t);
+    ConfigRegistry::setConfig(name, "mode", mode_int);
+    // If filter don't exist in ConfigRegistry, finds in json
+    std::string f_accept = ConfigRegistry::getConfig(name, "f_accept");
+    std::string f_mask = ConfigRegistry::getConfig(name, "f_mask");
+    if(f_accept.length() > 0 && f_mask.length() > 0) {
+        log_d("Taking Registry parameters for filter...");
+        ConfigRegistry::setConfig(name, "f_accept", value2uint32_t(f_accept));
+        ConfigRegistry::setConfig(name, "f_mask", value2uint32_t(f_mask, 0xFFFFFFFF));
+    } else {
+        log_d("Taking JSON parameters for filter...");
+        twai_filter_config_t filter = getFilter(source["filter"]);
+        ConfigRegistry::setConfig(name, "f_accept", filter.acceptance_code);
+        ConfigRegistry::setConfig(name, "f_mask", filter.acceptance_mask);
+        ConfigRegistry::setConfig(name, "f_single", filter.single_filter);
+    }
     // 3. Start configuration
     if (!m_twai->configure()) {
-        log_e("[%s] TWAI protocol driver not instanciated", name);
+        log_e("[%s] TWAI protocol driver not instanced", name);
         return DIError::BUS_REQ_ERROR; // TODO: create bus init error
     }
     // Then, wait to one data node to start the protocol
@@ -284,33 +301,9 @@ int DsCANBUS::build(JsonObject source, int index) {
     return DataSource::build(source, index);
 }
 
-bool DsCANBUS::addId(uint32_t id, CANSignalNodeBase *node) {
-    if (!m_twai) {
-        log_e("TWAI protocol driver lost instance");
-        return false;
-    }
-
-    return m_twai->addId(id, node);
-}
-
-esp_err_t DsCANBUS::sendMessage(uint32_t id, const uint8_t* data, uint8_t length, int timeout_ms) {
-    if (!m_twai) {
-        log_e("TWAI protocol driver lost instance");
-        return false;
-    }
-
-    return m_twai->sendMessage(id, data, length, timeout_ms);
-}
-
-bool DsCANBUS::runProtocol() {
-    if (!m_twai) {
-        log_e("TWAI protocol driver lost instance");
-        return false;
-    }
-    return m_twai->begin();
-}
-
 TwaiProtocol *DsCANBUS::protocol() {
+    if (!m_twai)
+        log_w("TWAI protocol driver instance lost");
     return m_twai;
 }
 
@@ -390,10 +383,15 @@ int CANSignalNodeBase::build(JsonObject node, int index) {
 
 void CANSignalNodeBase::start() {
     DsCANBUS* source = static_cast<DsCANBUS*>(m_source);
-    if (m_dir == CommDir::rtx || m_dir == CommDir::rx) {
-        source->addId(m_canId, this);
+    TwaiProtocol *protocol = source->protocol();
+    if (!protocol) {
+        log_w("DsCANBUS has not TWAI protocol instance");
+        return;
     }
-    source->runProtocol();
+    if (m_dir == CommDir::rtx || m_dir == CommDir::rx) {
+        protocol->addId(m_canId, this);
+    }
+    protocol->begin();
 }
 
 void CANSignalNodeBase::request() {
@@ -414,7 +412,9 @@ void CANSignalNodeBase::request() {
         packData(message, value);
 
         esp_err_t tx_error = ESP_ERR_NO_MEM;
-        if (protocol != nullptr)
+        if (!protocol)
+            log_w("DsCANBUS has not TWAI protocol instance");
+        else
             tx_error = protocol->sendMessage(message, m_timeout);
         if ( tx_error != ESP_OK) {
             const char *tx_error_s = esp_err_to_name(tx_error);

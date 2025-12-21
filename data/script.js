@@ -1,4 +1,4 @@
-var paritysel, message, nodearea, socksel;
+var paritysel, message, nodearea, socksel, cb_baudsel, cb_issingle;
 
 window.onload = setup;
 
@@ -25,6 +25,14 @@ function setup() {
     document.querySelector("#sockwss").checked = true;
   else
     document.querySelector("#sockmqtt").checked = true;
+  
+  const cb_baud = document.querySelector("#cb_baud");
+  if (!isEmptyOrNull(cb_baudsel))
+    cb_baud.value = cb_baudsel;
+
+  const cb_single = document.querySelector("#cb_single");
+  if (!isEmptyOrNull(cb_issingle))
+    cb_single.checked = cb_issingle === 'true';
 
   document.querySelector("#file_input").addEventListener("change", async (ev) => {
     const file = ev.target.files[0];
@@ -112,4 +120,8 @@ function validate(text) {
   } catch (e) {
     return `<div>Invalid <code>JSON</code> FAIL at ${e.message.split(" at ")[1]}<div/>`;
   }
+}
+
+function isEmptyOrNull(text) {
+  return !text || text.trim().length === 0;
 }

@@ -21,13 +21,12 @@ public:
     int build(JsonObject source, int index) override;
     const char* type() override { return "CANBUS"; }
     static DataSource* Create() { return new DsCANBUS(); }
-    bool runProtocol();
-    bool addId(uint32_t id, CANSignalNodeBase *node);
-    esp_err_t sendMessage(uint32_t id, const uint8_t* data, uint8_t length, int timeout_ms);
+    /// @brief Canbus (TWAI) protocol instance
+    /// @return Protocol instance, for CANSignalNodeBase class to manage
     TwaiProtocol *protocol();
 
 private:
-    TwaiProtocol *m_twai;
+    TwaiProtocol *m_twai; ///< Ptotocol instance
 };
 
 
