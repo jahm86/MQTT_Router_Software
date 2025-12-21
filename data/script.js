@@ -1,4 +1,4 @@
-var paritysel, message, nodearea, socksel, cb_baudsel, cb_issingle;
+var paritysel, message, nodearea, socksel, cb_baudsel, cb_issingle, ser_speedsel, ser_bitssel, ser_stopsel;
 
 window.onload = setup;
 
@@ -29,6 +29,18 @@ function setup() {
   const cb_baud = document.querySelector("#cb_baud");
   if (!isEmptyOrNull(cb_baudsel))
     cb_baud.value = cb_baudsel;
+
+  const ser_speed = document.querySelector("#ser_speed");
+  if (!isEmptyOrNull(ser_speedsel))
+    ser_speed.value = ser_speedsel;
+
+  const ser_bits = document.querySelector("#ser_bits");
+  if (!isEmptyOrNull(ser_bitssel))
+    ser_bits.value = ser_bitssel;
+
+  const ser_stop = document.querySelector("#ser_stop");
+  if (!isEmptyOrNull(ser_stopsel))
+    ser_stop.value = ser_stopsel;
 
   const cb_single = document.querySelector("#cb_single");
   if (!isEmptyOrNull(cb_issingle))

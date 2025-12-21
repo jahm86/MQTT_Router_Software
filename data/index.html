@@ -15,16 +15,26 @@
         <form action="/wifi" method="POST">
           <p>
             <h3>WiFi</h3><hr>
-            <label for="ssid">SSID</label>
-            <input type="text" id="ssid" name="ssid" value="%wifi:ssid%"><br>
-            <label for="wpass">Password</label>
-            <input type="password" id="wpass" name="wpass" value="%wifi:wpass%"><br>
-            <label for="ip">IP Address (*)</label>
-            <input type="text" id="ip" name="ip" value="%wifi:ip%"><br>
-            <label for="ip">Gateway (*)</label>
-            <input type="text" id="gateway" name="gateway" value="%wifi:gateway%"><br>
-            <label for="ip">Subnet (*)</label>
-            <input type="text" id="subnet" name="subnet" value="%wifi:subnet%"><br>
+            <div class="flex-container">
+              <label for="ssid">SSID</label>
+              <input type="text" id="ssid" name="ssid" value="%wifi:ssid%">
+            </div>
+            <div class="flex-container">
+              <label for="wpass">Password</label>
+              <input type="password" id="wpass" name="wpass" value="%wifi:wpass%">
+            </div>
+            <div class="flex-container">
+              <label for="ip">IP Address (*)</label>
+              <input type="text" id="ip" name="ip" value="%wifi:ip%">
+            </div>
+            <div class="flex-container">
+              <label for="ip">Gateway (*)</label>
+              <input type="text" id="gateway" name="gateway" value="%wifi:gateway%">
+            </div>
+            <div class="flex-container">
+              <label for="ip">Subnet (*)</label>
+              <input type="text" id="subnet" name="subnet" value="%wifi:subnet%">
+            </div>
             <label>(*) Optional</label><br><br>
             <input type="submit" value="Submit">
           </p>
@@ -39,16 +49,26 @@
               <input type="radio" id="sockmqtts" name="sock" value="mqtts"/>mqtts
               <input type="radio" id="sockws" name="sock" value="ws"/>ws
               <input type="radio" id="sockwss" name="sock" value="wss"/>wss<br>
-            <label for="url">URL</label>
-            <input type="text" id="url" name="url" value="%mqtt:url%"><br>
-            <label for="port">Port</label>
-            <input type="number" id="port" name="port" value=%mqtt:port%><br>
-            <label for="user">User</label>
-            <input type="text" id="user" name="user" value="%mqtt:user%"><br>
-            <label for="pass">Password</label>
-            <input type="password" id="pass" name="pass" value="%mqtt:pass%"><br>
-            <label for="devid">Device ID</label>
-            <input type="text" id="devid" name="devid" value="%mqtt:devid%"><br>
+            <div class="flex-container">
+              <label for="url">URL</label>
+              <input type="text" id="url" name="url" value="%mqtt:url%">
+            </div>
+            <div class="flex-container">
+              <label for="port">Port</label>
+              <input type="number" id="port" name="port" min=0 max=65535 value=%mqtt:port%>
+            </div>
+            <div class="flex-container">
+              <label for="user">User</label>
+              <input type="text" id="user" name="user" value="%mqtt:user%">
+            </div>
+            <div class="flex-container">
+              <label for="pass">Password</label>
+              <input type="password" id="pass" name="pass" value="%mqtt:pass%">
+            </div>
+            <div class="flex-container">
+              <label for="devid">Device ID</label>
+              <input type="text" id="devid" name="devid" value="%mqtt:devid%">
+            </div>
             <label for="cacert">Server TLS Certificate</label>
             <input name="cacert" accept=".crt,.der" type="file" id="cacert_input"/><br><br>
             <input type="submit" value="Submit">
@@ -59,12 +79,50 @@
         <form action="/serial" method="POST">
           <p>
             <h3>Serial Port</h3><hr>
-            <label for="speed">Speed</label>
-            <input type="number" id="speed" name="speed" min=75 max=5000000 value=%serial:speed%><br>
-            <label for="bits">Data bits</label>
-            <input type="number" id="bits" name="bits" min=5 max=8 value=%serial:bits%><br>
-            <label for="stop">Stop bits</label>
-            <input type="number" id="stop" name="stop" min=1 max=2 value=%serial:stop%><br>
+            <div class="flex-container">
+              <label for="speed">Speed</label>
+              <select id="ser_speed" name="speed">
+                <option value="50">50 bauds</option>
+                <option value="75">75 bauds</option>
+                <option value="110">110 bauds</option>
+                <option value="134">134 bauds</option>
+                <option value="150">150 bauds</option>
+                <option value="200">200 bauds</option>
+                <option value="300">300 bauds</option>
+                <option value="600">600 bauds</option>
+                <option value="1200">1200 bauds</option>
+                <option value="1800">1800 bauds</option>
+                <option value="2400">2400 bauds</option>
+                <option value="4800">4800 bauds</option>
+                <option value="9600" selected>9600 bauds</option>
+                <option value="19200">19200 bauds</option>
+                <option value="28800">28800 bauds</option>
+                <option value="38400">38400 bauds</option>
+                <option value="57600">57600 bauds</option>
+                <option value="76800">76800 bauds</option>
+                <option value="115200">115200 bauds</option>
+                <option value="230400">230400 bauds</option>
+                <option value="460800">460800 bauds</option>
+                <option value="576000">576000 bauds</option>
+                <option value="921600">921600 bauds</option>
+              </select>
+            </div>
+            <div class="flex-container">
+              <label for="bits">Data bits</label>
+              <select id="ser_bits" name="bits">
+                <option value="5">5 bits</option>
+                <option value="6">6 bits</option>
+                <option value="7">7 bits</option>
+                <option value="8" selected>8 bits</option>
+              </select>
+            </div>
+            <div class="flex-container">
+              <label for="stop">Stop bits</label>
+              <select id="ser_stop" name="stop">
+                <option value="1" selected>1 bit</option>
+                <option value="2">2 bits</option>
+              </select>
+            </div>
             <label for="parity" id="parity">Parity</label>
               <input type="radio" id="parityn" name="parity" value="none"/>NONE
               <input type="radio" id="paritye" name="parity" value="even"/>EVEN
@@ -141,5 +199,8 @@
   var socksel="%mqtt:sock%";
   var cb_baudsel = "%canbus:baud%";
   var cb_issingle = "%canbus:f_single%";
+  var ser_speedsel = "%serial:speed%";
+  var ser_bitssel = "%serial:bits%";
+  var ser_stopsel = "%serial:stop%";
 </script>
 </html>
