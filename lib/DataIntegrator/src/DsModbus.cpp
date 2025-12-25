@@ -189,8 +189,8 @@ private:
   // Private constructor to force factory usage
   ModbusProtocol(const std::string& key) : BaseProtocol(key), m_serial_p(nullptr), m_rtu_client(nullptr), m_token_map() {};
 
-  // New instance creation
-  static ModbusProtocol* newInstance(const std::string& key) { return new ModbusProtocol(key); }
+  // Friend declaration
+  friend ModbusProtocol* BaseProtocol::newInstance<ModbusProtocol>(const std::string& key);
 
 public:
   ~ModbusProtocol() {
@@ -203,14 +203,14 @@ public:
    * @brief Creates or gets a shared instance
    */
   static ModbusProtocol* createShared(const std::string& key, const char* dataSourceName) {
-    return BaseProtocol::createShared<ModbusProtocol>(key, newInstance, dataSourceName);
+    return BaseProtocol::createShared<ModbusProtocol>(key, dataSourceName);
   }
   
   /**
    * @brief Creates unique instance (not shared)
    */
   static std::unique_ptr<ModbusProtocol> createUnique(const std::string& key) {
-    return BaseProtocol::createUnique<ModbusProtocol>(key, newInstance);
+    return BaseProtocol::createUnique<ModbusProtocol>(key);
   }
 
   // ========== PUBLIC INTERFACE IMPLEMENTATION ==========

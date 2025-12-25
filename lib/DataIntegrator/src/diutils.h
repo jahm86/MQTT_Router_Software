@@ -313,17 +313,20 @@ public:
  */
 class BaseProtocol {
 protected:
-  std::string m_key;          ///< "[DATATYPE]@[Instance]", where DATATYPE = ("CANBUS", "RTU", "TCP", etc...) and [0 <= Instance < <uint8_t>::max()]
+  std::string m_key;          ///< "[protocolName]@[instanceNumber]", where protocolName = ("CANBUS", "RTU", "TCP", etc...) and [0 <= instanceNumber < no_value]
   bool m_configured = false;  ///< Protocol is configured?
   bool m_started = false;     ///< Protocol is started?
   Semaphore m_rec_mutex;      ///< Recursive mutex (started on BaseProtocol instantiation)
-  
-  // Key parse methods
+
+  /**
+   * @brief Key parse method
+   * @param key Protocol instance name to br parsed, in format "[protocolName]@[instanceNumber]" (e.g. "TWAI@0")
+   * @return Pair of {protocolName, instanceNumber} if key can be parsed, {key/protocolName, no_value} otherwise
+   */
   static std::pair<std::string, uint8_t> parseKey(const std::string& key) {
-    uint8_t no_value = std::numeric_limits<uint8_t>::max();
     size_t atPos = key.find('@');
     if (atPos == std::string::npos) {
-      return {key, no_value}; // No instance, instance 0 by default
+      return {key, no_value};
     }
     
     std::string type = key.substr(0, atPos);
@@ -336,56 +339,78 @@ protected:
       return {type, no_value};
     }
   }
-  
-  // Protected constructor
+
+  /**
+   * @brief Protected constructor
+   */
   BaseProtocol(const std::string& key)
     : m_key(key), m_rec_mutex(Semaphore::create_recursive_mutex()) {
     
     // Auto registry with no instance
     ConfigRegistry::registerProtocol(key);
   }
-  
-public:
-  virtual ~BaseProtocol() = default;
-  
-  // ========== TYPE AND VERIFICATION METHODS ==========
-  
+
   /**
-   * @brief Gets the type of protocol (ej: "twai", "rtu", "tcp")
+   * @brief New instance creation
+   * @details Derived classes must declare this method as friend in private/protected sections
+   * (e.g. friend TwaiProtocol* BaseProtocol::newInstance<TwaiProtocol>(const std::string& key);)
+   * @tparam T Derived class type name
+   * @param key Protocol key, in format [protocolName]@[instanceNumber] (e.g. "TWAI@0")
+   * @return New protocol instance pointer or nullptr if no allocation space
+   */
+  template<typename T>
+  static T* newInstance(const std::string& key) { return new T(key); }
+
+public:
+
+  static const uint8_t no_value = std::numeric_limits<uint8_t>::max(); ///< No instance value, <uint8_t>::max() by default
+
+  /**
+   * @brief Default destructor
+   */
+  virtual ~BaseProtocol() = default;
+
+  // ========== TYPE AND VERIFICATION METHODS ==========
+
+  /**
+   * @brief Gets the type of protocol (e.g. "TWAI", "MODBUS_RTU", "MODBUS_TCP")
    */
   const std::string getProtocolType() const { return parseKey(m_key).first; }
-  
+
   /**
    * @brief Gets the instance number
    */
   uint8_t getInstanceNumber() const { return parseKey(m_key).second; }
-  
+
   /**
    * @brief Verify if this protocol is compatible with given type
-   * @param expectedType Expacted type (ej: "TWAI", "CANBUS", "MODBUS_RTU")
+   * @param expected_type Expacted type (e.g. "TWAI", "CANBUS", "MODBUS_RTU")
+   * @return True if this instance name equals expected_type, otherwise returns false
    */
-  bool isType(const std::string& expectedType) const {
-    return expectedType == getProtocolType();
+  bool isType(const std::string& expected_type) const {
+    return expected_type == getProtocolType();
   }
 
   // ========== PUBLIC SATIC METHODS ==========
-  
+
   /**
    * @brief Gets an existing instance with type verification
-   * @param key Protocol key (ej: "twai@0")
-   * @param expectedType Expected type (for verification)
-   * @return Protocol pointer or nullptr does not exits or wrong type
+   * @tparam T Derived class type name
+   * @param key Protocol key, in format "[protocolName]@[instanceNumber]" (e.g. "TWAI@0")
+   * @param expected_type Expected type (for verification), in format "[protocolName]" (e.g. "TWAI").
+   * Do not use if no type verification needed
+   * @return Pair of {[protocol instance pointer], autoManaged} or def_value if does not exits or wrong type
    */
   template<typename T>
   static std::pair<T*, bool> getExistingChecked(const std::string& key, 
-                               const std::string& expectedType = "") {
+                               const std::string& expected_type = "") {
     auto existing = getExisting(key);
     if (!existing.first) return def_value;
     
     // Verify type if specified
-    if (!expectedType.empty() && !existing.first->isType(expectedType)) {
+    if (!expected_type.empty() && !existing.first->isType(expected_type)) {
       log_e("Type mismatch for %s. Expected: %s, Got: %s\n",
-                    key.c_str(), expectedType.c_str(), 
+                    key.c_str(), expected_type.c_str(), 
                     existing.first->getProtocolType().c_str());
       return def_value;
     }
@@ -394,6 +419,11 @@ public:
     return {static_cast<T*>(existing.first), existing.second};
   }
 
+  /**
+   * @brief Gets an existing instance
+   * @param key Protocol key, in format "[protocolName]@[instanceNumber]" (e.g. "TWAI@0")
+   * @return Pair of {[protocol instance pointer], autoManaged} or def_value if does not exits
+   */
   static std::pair<BaseProtocol*, bool> getExisting(const std::string& key) {
     return ConfigRegistry::getProtocol(key);
   }
@@ -408,14 +438,18 @@ public:
 
   /**
    * @brief Creates or get a shared instance with verification
+   * @tparam T Derived class type name
+   * @param key Protocol key, in format "[protocolName]@[instanceNumber]" (e.g. "TWAI@0")
+   * @param expected_type ptotocol type name, in format "[protocolName]" (e.g. "TWAI").
+   * Do not use if no type verification needed
+   * @return Shared instance, or nullptr if it's not shared
    */
   template<typename T>
   static T* createShared(const std::string& key,
-                         std::function<T *(const std::string&)> new_inst_func,
-                         const std::string& expectedType = "") {
+                         const std::string& expected_type = "") {
 
     // Verify if already exist
-    auto existing = BaseProtocol::getExistingChecked<T>(key, expectedType);
+    auto existing = BaseProtocol::getExistingChecked<T>(key, expected_type);
 
     if (existing.first) {
       // Verify if protocol can be shared
@@ -427,7 +461,7 @@ public:
     }
 
     // Create new instance
-    T* instance = new_inst_func(key);
+    T* instance = newInstance<T>(key);
     // Register as auto-managed
     BaseProtocol::registerInstance(key, instance, true);
     return instance;
@@ -435,10 +469,12 @@ public:
 
   /**
    * @brief Creates unique instance (not shared)
+   * @tparam T Derived class type name
+   * @param key Protocol key, in format "[protocolName]@[instanceNumber]" (e.g. "TWAI@0")
+   * @return Unique instance, or nullptr if already exists
    */
   template<typename T>
-  static std::unique_ptr<T> createUnique(const std::string& key,
-                                         std::function<T *(const std::string&)> new_inst_func) {
+  static std::unique_ptr<T> createUnique(const std::string& key) {
     // Verify that does not exist
     auto existing = getExisting(key);
 
@@ -448,7 +484,7 @@ public:
     }
   
     // Create new instance
-    std::unique_ptr<T> instance(new_inst_func(key));
+    std::unique_ptr<T> instance(newInstance<T>(key));
     // Register as no auto-managed
     BaseProtocol::registerInstance(key, instance.get(), false);
   
@@ -456,31 +492,64 @@ public:
   }
   
   // ========== PUBLIC INTERFACE ==========
-  
+
+  /**
+   * @brief Protocol-specific configuration routine
+   * @return True if all protocol-specific configuration steps are accomplished, otherwise returns false
+   */
   virtual bool configure() = 0;
+
+  /**
+   * @brief Protocol-specific initialization routine
+   * @return True if all protocol-specific initialization steps are accomplished, otherwise returns false
+   */
   virtual bool begin() = 0;
+
+  /**
+   * @brief Protocol-specific finalization routine
+   */
   virtual void end() = 0;
-  
+
+  /**
+   * @brief Returns true if protocol is configured and started
+   */
   bool isReady() const { return m_configured && m_started; }
 
+  /**
+   * @brief Returns true if protocol is started
+   */
   bool isStarted() const { return m_started; }
 
+  /**
+   * @brief Returns true if protocol is configured
+   */
   bool isConfigured() const { return m_configured; }
 
+  /**
+   * @brief Release a reference to a protocol
+   * @return True if protocol was removed (referenceCount == 0)
+   */
   bool release() { return ConfigRegistry::releaseProtocol(m_key); }
-  
+
   // ====== Access to configuration ======
 
+  /**
+   * @brief Search for configuration parameter in this BaseProtocol instance
+   * @tparam T Type of config parameter (e.g. std::string, int, float, bool, etc...)
+   * @param param Name of parameter to find
+   * @param defaultValue Default value to return if parameter not found or can't convert
+   * @return The parameter value if is found and can be converted, defaultValue otherwise
+   */
   template<typename T>
   T getConfig(const std::string& param, T defaultValue = T()) const {
     return ConfigRegistry::getConfigAs<T>(m_key, param, defaultValue);
   }
-  
+
   std::string getString(const std::string& param, 
                        const std::string& def = "") const {
     return getConfig<std::string>(param, def);
   }
-  
+
   int getInt(const std::string& param, int def = 0) const {
     return getConfig<int>(param, def);
   }
@@ -497,20 +566,29 @@ public:
     return getConfig<float>(param, def);
   }
 
-  float getDouble(const std::string& param, double def = 0.0f) const {
+  double getDouble(const std::string& param, double def = 0.0f) const {
     return getConfig<double>(param, def);
   }
-  
+
   bool getBool(const std::string& param, bool def = false) const {
     return getConfig<bool>(param, def);
   }
-  
+
+  /**
+   * @brief Search for configuration parameter in this BaseProtocol instance
+   * @param param Name of parameter to find
+   * @return True if parameter is found, false otherwise
+   */
   bool hasParam(const std::string& param) const {
     return ConfigRegistry::hasConfig(m_key, param);
   }
-  
+
+  /**
+   * @brief Gets key name of this BaseProtocol instance
+   * @return Key name in format "[protocolName]@[instanceNumber]" (e.g. "TWAI@0")
+   */
   const std::string& getKey() const { return m_key; }
-  
+
   friend class ConfigRegistry;
 };
 

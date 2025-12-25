@@ -21,8 +21,8 @@ private:
   // Private constructor to force factory usage
   TwaiProtocol(const std::string& key) : BaseProtocol(key), m_task(nullptr), m_id_map() {};
 
-  // New instance creation
-  static TwaiProtocol* newInstance(const std::string& key) { return new TwaiProtocol(key); }
+  // Friend declaration
+  friend TwaiProtocol* BaseProtocol::newInstance<TwaiProtocol>(const std::string& key);
   
 public:
   ~TwaiProtocol() {
@@ -35,14 +35,14 @@ public:
    * @brief Creates or gets a shared instance
    */
   static TwaiProtocol* createShared(const std::string& key, DataSource* dataSource) {
-    return BaseProtocol::createShared<TwaiProtocol>(key, newInstance, dataSource->type());
+    return BaseProtocol::createShared<TwaiProtocol>(key, dataSource->type());
   }
   
   /**
    * @brief Creates unique instance (not shared)
    */
   static std::unique_ptr<TwaiProtocol> createUnique(const std::string& key) {
-    return BaseProtocol::createUnique<TwaiProtocol>(key, newInstance);
+    return BaseProtocol::createUnique<TwaiProtocol>(key);
   }
 
   // ========== PUBLIC INTERFACE IMPLEMENTATION ==========
