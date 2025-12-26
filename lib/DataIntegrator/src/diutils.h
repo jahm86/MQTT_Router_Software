@@ -359,7 +359,12 @@ protected:
    * @return New protocol instance pointer or nullptr if no allocation space
    */
   template<typename T>
-  static T* newInstance(const std::string& key) { return new T(key); }
+  static T* newInstance(const std::string& key) {
+    // Verify in compile time that T is subclass of BaseProtocol
+    static_assert(std::is_base_of<BaseProtocol, T>::value,
+                  "T must inherit from BaseProtocol");
+    return new T(key);
+  }
 
 public:
 

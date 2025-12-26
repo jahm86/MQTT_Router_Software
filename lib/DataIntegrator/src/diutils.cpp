@@ -296,6 +296,23 @@ bool ConfigRegistry::hasConfig(const std::string& protocolKey,
   return paramIt != it->second.config.end();
 }
 
+void ConfigRegistry::debugPrint() {
+#if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
+  log_d("***************************** Show ConfigRegistry *****************************");
+  auto& instance = getInstance();
+  LockGuard lg(instance.m_mutex);
+  int proto_index = 0;
+  for (const auto& protoPair : instance.registry) {
+    log_d("%d. Protocol: %s", proto_index++, protoPair.first.c_str());
+    int prm_index = 0;
+    for (const auto& paramPair : protoPair.second.config) {
+      log_d("  %d) %s = %s", prm_index++, paramPair.first.c_str(), paramPair.second.c_str());
+    }
+  }
+  log_d("***************************** End  ConfigRegistry *****************************");
+#endif //ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
+}
+
 //************************************** A Gossip Allocator :) **************************************//
 
 #ifdef USE_TOAD_ALLOCATOR

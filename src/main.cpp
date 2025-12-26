@@ -542,6 +542,9 @@ void setup() {
       return;
     }
 
+    // Debug registry details
+    ConfigRegistry::debugPrint();
+
     // Variable to store the MAC address
     uint8_t baseMac[6];
     // Get MAC address of the WiFi station interface
