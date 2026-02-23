@@ -18,10 +18,13 @@
     "name": "ESP32-I/O",
     "type": "io",
     "nodes": [
-      {"name": "vvs", "type": "ai", "pin": 34, "off": 0, "gain": 409.6, "bits": 12, "unit": "%", "mintime": 10, "maxtime": 300, "delta": 0.5},
-      {"name": "lsw1", "type": "di", "pin": 25, "inv": false, "mintime": 1, "maxtime": 600},
-      {"name": "li1", "type": "do", "pin": 26, "init": true, "inv": true},
-      {"name": "vva", "type": "pwm", "pin": 27, "off": 0, "gain": 2.55, "freq": 5000, "bits": 8, "init": 25.0, "unit": "%"}
+      {"name": "biled", "type": "do", "pin": 2, "init": true, "inv": false},
+      {"name": "vvs", "type": "ai", "pin": 36, "off": 0, "gain": 409.6, "bits": 12, "unit": "%", "mintime": 10, "maxtime": 300, "delta": 0.5},
+      {"name": "lsw1", "type": "di", "pin": 34, "inv": true, "mintime": 1, "maxtime": 600},
+      {"name": "lsw2", "type": "di", "pin": 35, "inv": true, "mintime": 1, "maxtime": 600},
+      {"name": "li1", "type": "do", "pin": 27, "init": true},
+      {"name": "li2", "type": "do", "pin": 26},
+      {"name": "vva", "type": "pwm", "pin": 18, "off": 0, "gain": 2.55, "freq": 5000, "bits": 8, "init": 25.0, "unit": "%"}
     ]
   },
   {

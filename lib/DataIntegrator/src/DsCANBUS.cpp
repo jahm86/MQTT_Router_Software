@@ -50,6 +50,13 @@ public:
   bool configure() override {
     LockGuard lock(m_rec_mutex);
 
+    // RS pin control
+    gpio_num_t rs_p = static_cast<gpio_num_t>(getInt("rs_pin", -1));
+    if (rs_p >= 0) {
+        pinMode(rs_p, OUTPUT);
+        digitalWrite(rs_p, LOW);
+    }
+
     // Read registry configuration
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(
         static_cast<gpio_num_t>(getInt("tx_pin", 21)),
@@ -65,8 +72,8 @@ public:
         .single_filter = getBool("f_single", true)
     };
     
-    log_d("[%s] Settings: tx(%d) rx(%d) mode(%d) baud(%ld) ", m_key.c_str(),
-        g_config.tx_io, g_config.rx_io, g_config.mode, baud);
+    log_d("[%s] Settings: tx(%d) rx(%d) rs(%d) mode(%d) baud(%ld) ", m_key.c_str(),
+        g_config.tx_io, g_config.rx_io, rs_p, g_config.mode, baud);
     log_d("[%s] Filter: code(0x%08X) mask(0x%08X), single(%s)", m_key.c_str(),
         f_config.acceptance_code, f_config.acceptance_mask, f_config.single_filter ? "true" : "false");
 
@@ -101,7 +108,7 @@ public:
     }
     
     log_d("[%s] Starting TWAI communication", m_key.c_str());
-    m_task = new extTask("CAN_RX", 4096, tskIDLE_PRIORITY + 2, [this] {
+    m_task = new extTask("CAN_RX", 8192, tskIDLE_PRIORITY + 2, [this] {
         twai_message_t rx_msg;
         log_d("[%s] Starting Can Bus Receive Task...", m_key.c_str());
         do { // Start a temporal scope (to not affect lock)

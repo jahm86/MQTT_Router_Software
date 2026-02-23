@@ -163,7 +163,7 @@ void DataBus::startCom() {
   }
   // Starts data bus task
   DataBus* inst = this;
-  m_taskHandler = new extTask("DataBus", 4096, tskIDLE_PRIORITY + 1, [inst]() {
+  m_taskHandler = new extTask("DataBus", 8192, tskIDLE_PRIORITY + 1, [inst]() {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
     // Checks for resource usage in debug mode
     UBaseType_t uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
@@ -423,7 +423,7 @@ void DataSource::start() {
   }
   // Start data source task
   DataSource* inst = this;
-  m_taskHandler = new extTask(m_name.c_str(), 4096, tskIDLE_PRIORITY + 2, [inst]() {
+  m_taskHandler = new extTask(m_name.c_str(), 8192, tskIDLE_PRIORITY + 2, [inst]() {
 #if ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
     // Checks for resource usage in debug mode
     UBaseType_t uxHighWaterMark = uxTaskGetStackHighWaterMark( NULL );
